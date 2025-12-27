@@ -238,17 +238,17 @@ const getVideoDetails = async (videoFile, metadata) => {
 
     const videoUrl = await getSignedVideoUrl(key);
 
-    // Generate/Get Thumbnail
-    const thumbnailFilename = `${filename.replace(/\.[^/.]+$/, "")}.jpg`;
-    const thumbnailPath = path.join(THUMBNAIL_DIR, thumbnailFilename);
+    // DISABLED: Thumbnail generation causes ffprobe crashes on VPS
+    // const thumbnailFilename = `${filename.replace(/\.[^/.]+$/, "")}.jpg`;
+    // const thumbnailPath = path.join(THUMBNAIL_DIR, thumbnailFilename);
     let thumbnailUrl = null;
 
-    if (fs.existsSync(thumbnailPath)) {
-        thumbnailUrl = `/thumbnails/${thumbnailFilename}`;
-    } else {
-        // Trigger generation in background without awaiting
-        generateThumbnail(key, thumbnailFilename);
-    }
+    // if (fs.existsSync(thumbnailPath)) {
+    //     thumbnailUrl = `/thumbnails/${thumbnailFilename}`;
+    // } else {
+    //     // Trigger generation in background without awaiting
+    //     generateThumbnail(key, thumbnailFilename);
+    // }
 
     return {
         filename,
