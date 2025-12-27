@@ -243,7 +243,7 @@ const generateThumbnail = (videoPath, thumbnailPath) => {
 let thumbnailGenerationInProgress = false;
 let thumbnailGenerationQueue = [];
 
-// Generate thumbnail for a single video
+// Generate thumbnail for a single video using signed URL (no full download needed)
 const generateThumbnailForVideo = async (videoFile) => {
     const { filename, key } = videoFile;
     const thumbnailFilename = `${path.parse(filename).name}.png`;
@@ -254,29 +254,41 @@ const generateThumbnailForVideo = async (videoFile) => {
         return { filename, status: 'exists' };
     }
 
-    const tempVideoPath = path.join(CACHE_DIR, `temp_${filename}`);
-
     try {
-        console.log(`[Thumbnail] Downloading video for thumbnail: ${filename}`);
-        await downloadFromR2(key, tempVideoPath);
-
-        console.log(`[Thumbnail] Generating thumbnail: ${filename}`);
-        await generateThumbnail(tempVideoPath, thumbnailCachePath);
-
-        // Clean up temp file
-        if (fs.existsSync(tempVideoPath)) {
-            fs.unlinkSync(tempVideoPath);
+        // Get signed URL for the video (valid for 1 hour)
+        const signedUrl = await getSignedVideoUrl(key, 3600);
+        if (!signedUrl) {
+            throw new Error('Could not generate signed URL');
         }
+
+        console.log(`[Thumbnail] Generating thumbnail from stream: ${filename}`);
+
+        // Use FFmpeg to read directly from signed URL - only fetches first few seconds
+        await new Promise((resolve, reject) => {
+            ffmpeg(signedUrl)
+                .inputOptions([
+                    '-ss', '5',           // Seek to 5 seconds
+                    '-t', '1'             // Only read 1 second of video
+                ])
+                .outputOptions([
+                    '-vframes', '1',      // Extract only 1 frame
+                    '-vf', `scale=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:force_original_aspect_ratio=decrease,pad=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:(ow-iw)/2:(oh-ih)/2`
+                ])
+                .output(thumbnailCachePath)
+                .on('end', () => {
+                    console.log(`[Thumbnail] Generated: ${filename}`);
+                    resolve(true);
+                })
+                .on('error', (err) => {
+                    console.error(`[Thumbnail] FFmpeg error for ${filename}: ${err.message}`);
+                    reject(err);
+                })
+                .run();
+        });
 
         return { filename, status: 'generated' };
     } catch (error) {
         console.error(`[Thumbnail] Failed for ${filename}:`, error.message);
-
-        // Clean up temp file on error
-        if (fs.existsSync(tempVideoPath)) {
-            try { fs.unlinkSync(tempVideoPath); } catch (e) { }
-        }
-
         return { filename, status: 'failed', error: error.message };
     }
 };
@@ -365,7 +377,7 @@ const getVideoDetails = async (videoFile, metadata) => {
         saveMetadata(metadata);
     }
 
-    // Thumbnail handling
+    // Thumbnail handling - only use existing thumbnails, don't generate on-demand
     const thumbnailFilename = `${path.parse(filename).name}.png`;
     const thumbnailCachePath = path.join(THUMBNAIL_CACHE_DIR, thumbnailFilename);
     const thumbnailR2Key = `videos/thumbnails/${thumbnailFilename}`;
@@ -377,32 +389,11 @@ const getVideoDetails = async (videoFile, metadata) => {
     if (thumbnailMeta) {
         // Generate signed URL for R2 thumbnail
         thumbnail_url = await getSignedVideoUrl(thumbnailR2Key, 86400); // 24 hour expiry
-        console.log(`Using R2 signed URL for thumbnail: ${filename}`);
     } else if (fs.existsSync(thumbnailCachePath)) {
         // Use local cache if available
         thumbnail_url = `/thumbnails/${thumbnailFilename}`;
-        console.log(`Using cached thumbnail for: ${filename}`);
-    } else {
-        // Try to generate thumbnail from video
-        console.log(`Generating thumbnail for ${filename}...`);
-        const tempVideoPath = path.join(CACHE_DIR, `temp_${filename}`);
-
-        try {
-            // Download video temporarily
-            await downloadFromR2(key, tempVideoPath);
-            // Generate thumbnail
-            await generateThumbnail(tempVideoPath, thumbnailCachePath);
-            // Clean up temp video
-            if (fs.existsSync(tempVideoPath)) {
-                fs.unlinkSync(tempVideoPath);
-            }
-            thumbnail_url = `/thumbnails/${thumbnailFilename}`;
-            console.log(`Generated thumbnail for: ${filename}`);
-        } catch (error) {
-            console.error(`Could not generate thumbnail for ${filename}:`, error.message);
-            thumbnail_url = null; // No fallback, let the app handle it
-        }
     }
+    // If no thumbnail exists, leave as null - background queue will generate it
 
     // Generate signed URL untuk video
     const videoUrl = await getSignedVideoUrl(key);
