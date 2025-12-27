@@ -1,4 +1,4 @@
-// server.js - Cloudflare R2 Version (No Auto Thumbnail Generation)
+// server.js - Cloudflare R2 Video Streaming Server (Clean - No Thumbnails)
 
 require('dotenv').config();
 const express = require('express');
@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 const { query, validationResult } = require('express-validator');
 const fs = require('fs');
 const path = require('path');
-const { S3Client, GetObjectCommand, ListObjectsV2Command, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const app = express();
@@ -52,18 +52,16 @@ const s3Client = new S3Client({
     },
 });
 
-// --- Local File and Directory Paths ---
+// --- Local Cache ---
 const CACHE_DIR = path.join(process.cwd(), "cache");
-const THUMBNAIL_CACHE_DIR = path.join(CACHE_DIR, "thumbnails");
 const METADATA_FILE = path.join(CACHE_DIR, "metadata.json");
 
 // --- App Version ---
 const LATEST_APP_VERSION = process.env.APP_VERSION || "1.0.1";
 const SHOW_UPDATE_DIALOG_COMMAND = process.env.SHOW_UPDATE_DIALOG === 'true';
 
-// Ensure directories exist
+// Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-if (!fs.existsSync(THUMBNAIL_CACHE_DIR)) fs.mkdirSync(THUMBNAIL_CACHE_DIR, { recursive: true });
 
 // --- R2 Helper Functions ---
 
@@ -76,7 +74,7 @@ async function listR2Videos() {
     try {
         const response = await s3Client.send(command);
         const videoFiles = (response.Contents || [])
-            .filter(item => item.Key.endsWith('.mp4') && !item.Key.includes('/thumbnails/'))
+            .filter(item => item.Key.endsWith('.mp4'))
             .map(item => ({
                 filename: path.basename(item.Key),
                 key: item.Key,
@@ -85,27 +83,8 @@ async function listR2Videos() {
             }));
         return videoFiles;
     } catch (error) {
-        console.error('Error listing R2 videos:', error);
+        console.error('Error listing R2 videos:', error.message);
         return [];
-    }
-}
-
-async function getR2ObjectMetadata(key) {
-    const command = new HeadObjectCommand({
-        Bucket: R2_BUCKET_NAME,
-        Key: key,
-    });
-
-    try {
-        const response = await s3Client.send(command);
-        return {
-            lastModified: response.LastModified,
-            contentLength: response.ContentLength,
-            contentType: response.ContentType
-        };
-    } catch (error) {
-        // Don't log error for missing thumbnails - it's expected
-        return null;
     }
 }
 
@@ -120,10 +99,9 @@ async function getSignedVideoUrl(key, expiresIn = 3600) {
     });
 
     try {
-        const url = await getSignedUrl(s3Client, command, { expiresIn });
-        return url;
+        return await getSignedUrl(s3Client, command, { expiresIn });
     } catch (error) {
-        console.error(`Error generating signed URL for ${key}:`, error);
+        console.error(`Error generating signed URL for ${key}:`, error.message);
         return null;
     }
 }
@@ -133,9 +111,8 @@ async function getSignedVideoUrl(key, expiresIn = 3600) {
 const loadMetadata = () => {
     if (fs.existsSync(METADATA_FILE)) {
         try {
-            const data = fs.readFileSync(METADATA_FILE, 'utf-8');
-            return JSON.parse(data);
-        } catch (error) {
+            return JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+        } catch {
             return {};
         }
     }
@@ -152,9 +129,10 @@ const extractTitleAndEpisode = (filename) => {
     const baseName = path.parse(filename).name;
     const match = baseName.match(/(.+?)[-._ ](?:E|EP|Episode)[-._ ]?(\d+)/i);
     if (match) {
-        const seriesTitle = match[1].replace(/[._]/g, ' ').trim();
-        const episodeNumber = parseInt(match[2], 10);
-        return { seriesTitle, episodeNumber };
+        return {
+            seriesTitle: match[1].replace(/[._]/g, ' ').trim(),
+            episodeNumber: parseInt(match[2], 10)
+        };
     }
     return { seriesTitle: baseName.replace(/[._]/g, ' ').trim(), episodeNumber: null };
 };
@@ -171,17 +149,11 @@ const getVideoDetails = async (videoFile, metadata) => {
 
     let metadataUpdated = false;
     if (!display_title || !series_title) {
-        const { seriesTitle: extractedSeriesTitle, episodeNumber: extractedEpisodeNumber } = extractTitleAndEpisode(filename);
-        if (!series_title) {
-            series_title = extractedSeriesTitle;
-            metadataUpdated = true;
-        }
-        if (!display_title) {
-            display_title = extractedSeriesTitle;
-            metadataUpdated = true;
-        }
+        const extracted = extractTitleAndEpisode(filename);
+        if (!series_title) { series_title = extracted.seriesTitle; metadataUpdated = true; }
+        if (!display_title) { display_title = extracted.seriesTitle; metadataUpdated = true; }
         if (episode_number === undefined || episode_number === null) {
-            episode_number = extractedEpisodeNumber;
+            episode_number = extracted.episodeNumber;
             metadataUpdated = true;
         }
     }
@@ -191,30 +163,12 @@ const getVideoDetails = async (videoFile, metadata) => {
         saveMetadata(metadata);
     }
 
-    // Thumbnail handling - check R2 first, then local cache
-    // Thumbnails must be manually uploaded to R2: videos/thumbnails/{filename}.png
-    // Or placed in local cache: /root/inuvps/cache/thumbnails/{filename}.png
-    const thumbnailFilename = `${path.parse(filename).name}.png`;
-    const thumbnailCachePath = path.join(THUMBNAIL_CACHE_DIR, thumbnailFilename);
-    const thumbnailR2Key = `videos/thumbnails/${thumbnailFilename}`;
-
-    let thumbnail_url = null;
-
-    // Check R2 for thumbnail
-    const thumbnailMeta = await getR2ObjectMetadata(thumbnailR2Key);
-    if (thumbnailMeta) {
-        thumbnail_url = await getSignedVideoUrl(thumbnailR2Key, 86400);
-    } else if (fs.existsSync(thumbnailCachePath)) {
-        thumbnail_url = `/thumbnails/${thumbnailFilename}`;
-    }
-    // If no thumbnail, returns null - app will show placeholder
-
     const videoUrl = await getSignedVideoUrl(key);
 
     return {
         filename,
         url: videoUrl || `/video/${filename}`,
-        thumbnail_url,
+        thumbnail_url: null,  // No thumbnails - app will use placeholder
         last_modified: fileMtime,
         display_title,
         episode_number,
@@ -260,7 +214,7 @@ app.get('/', async (req, res) => {
         </li>
     `).join('');
 
-    const htmlTemplate = `
+    res.send(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -273,7 +227,6 @@ app.get('/', async (req, res) => {
             ul { list-style: none; padding: 0; }
             li { background-color: #2a2a2a; margin-bottom: 10px; padding: 10px; border-radius: 8px; }
             a { color: #4CAF50; text-decoration: none; }
-            a:hover { text-decoration: underline; }
             small { color: #888; }
         </style>
     </head>
@@ -282,8 +235,7 @@ app.get('/', async (req, res) => {
         <ul>${fileListItems}</ul>
     </body>
     </html>
-    `;
-    res.send(htmlTemplate);
+    `);
 });
 
 app.get('/api/videos', async (req, res) => {
@@ -298,7 +250,9 @@ app.get('/api/videos', async (req, res) => {
 
     const { series_title } = req.query;
     if (series_title) {
-        allVideosData = allVideosData.filter(v => v.series_title && v.series_title.toLowerCase() === series_title.toLowerCase());
+        allVideosData = allVideosData.filter(v =>
+            v.series_title && v.series_title.toLowerCase() === series_title.toLowerCase()
+        );
     }
 
     res.json(allVideosData);
@@ -315,11 +269,10 @@ app.get('/api/series', async (req, res) => {
 
     for (const video of allVideoDetails) {
         if (video && video.series_title) {
-            const { series_title, thumbnail_url, last_modified, description } = video;
+            const { series_title, last_modified, description } = video;
             if (!seriesInfo.has(series_title)) {
                 seriesInfo.set(series_title, {
                     count: 0,
-                    thumbnail_url: null,
                     last_modified: '1970-01-01 00:00:00',
                     description: "No description available."
                 });
@@ -327,9 +280,6 @@ app.get('/api/series', async (req, res) => {
 
             const currentSeries = seriesInfo.get(series_title);
             currentSeries.count++;
-            if (!currentSeries.thumbnail_url) {
-                currentSeries.thumbnail_url = thumbnail_url;
-            }
 
             if (new Date(last_modified) > new Date(currentSeries.last_modified)) {
                 currentSeries.last_modified = last_modified;
@@ -341,7 +291,7 @@ app.get('/api/series', async (req, res) => {
     let result = Array.from(seriesInfo.entries()).map(([title, info]) => ({
         series_title: title,
         video_count: info.count,
-        thumbnail_url: info.thumbnail_url,
+        thumbnail_url: null,  // No thumbnails
         last_modified: info.last_modified,
         description: info.description
     }));
@@ -358,15 +308,14 @@ app.get('/api/series/:series_title', async (req, res) => {
 
     let seriesVideosData = (await Promise.all(
         videoFiles.map(file => getVideoDetails(file, metadata))
-    )).filter(v => v && v.series_title && v.series_title.toLowerCase() === series_title.toLowerCase());
+    )).filter(v =>
+        v && v.series_title && v.series_title.toLowerCase() === series_title.toLowerCase()
+    );
 
     seriesVideosData.sort((a, b) => {
         const epA = a.episode_number !== null ? a.episode_number : Infinity;
         const epB = b.episode_number !== null ? b.episode_number : Infinity;
-        if (epA !== epB) {
-            return epA - epB;
-        }
-        return a.filename.localeCompare(b.filename);
+        return epA !== epB ? epA - epB : a.filename.localeCompare(b.filename);
     });
 
     res.json(seriesVideosData);
@@ -401,32 +350,6 @@ app.get('/api/search',
         }
     });
 
-// --- Thumbnail List API (for checking what's uploaded) ---
-
-app.get('/api/thumbnails/list', (req, res) => {
-    try {
-        const files = fs.readdirSync(THUMBNAIL_CACHE_DIR);
-        const thumbnails = files.filter(f => f.endsWith('.png') || f.endsWith('.jpg')).map(f => ({
-            filename: f,
-            url: `/thumbnails/${f}`
-        }));
-        res.json({
-            count: thumbnails.length,
-            thumbnails,
-            upload_instructions: {
-                r2_path: "videos/thumbnails/{video_filename}.png",
-                local_path: "/root/inuvps/cache/thumbnails/{video_filename}.png"
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// --- Static File Serving (for local thumbnails) ---
-
-app.use('/thumbnails', express.static(THUMBNAIL_CACHE_DIR));
-
 // --- Video Streaming Route ---
 
 app.get('/video/:filename', async (req, res) => {
@@ -439,8 +362,7 @@ app.get('/video/:filename', async (req, res) => {
     }
 
     if (R2_PUBLIC_URL) {
-        const publicUrl = `${R2_PUBLIC_URL}/${videoFile.key}`;
-        return res.redirect(publicUrl);
+        return res.redirect(`${R2_PUBLIC_URL}/${videoFile.key}`);
     }
 
     try {
@@ -481,7 +403,7 @@ app.get('/video/:filename', async (req, res) => {
             response.Body.pipe(res);
         }
     } catch (error) {
-        console.error('Error streaming video:', error);
+        console.error('Error streaming video:', error.message);
         res.status(500).send('Error streaming video');
     }
 });
@@ -489,11 +411,8 @@ app.get('/video/:filename', async (req, res) => {
 // --- Error Handlers ---
 
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
-    res.status(err.status || 500).json({
-        error: 'Internal server error',
-        message: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    console.error('Unhandled error:', err.message);
+    res.status(err.status || 500).json({ error: 'Internal server error' });
 });
 
 app.use((req, res) => {
@@ -503,9 +422,8 @@ app.use((req, res) => {
 // --- Start Server ---
 
 app.listen(PORT, HOST, () => {
-    console.log(`✅ Server is running at http://${HOST}:${PORT}`);
-    console.log(`📦 R2 Bucket: ${R2_BUCKET_NAME}`);
-    console.log(`🔗 R2 Endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
-    console.log(`🩺 Health check: http://${HOST}:${PORT}/health`);
-    console.log(`\n📷 Thumbnails: Upload manually to R2 (videos/thumbnails/) or local cache (/cache/thumbnails/)`);
+    console.log(` Server is running at http://${HOST}:${PORT}`);
+    console.log(` R2 Bucket: ${R2_BUCKET_NAME}`);
+    console.log(` R2 Endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
+    console.log(` Health check: http://${HOST}:${PORT}/health`);
 });
