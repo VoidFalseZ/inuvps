@@ -1,4 +1,4 @@
-// server.js - Cloudflare R2 Version
+// server.js - Cloudflare R2 Version (No Auto Thumbnail Generation)
 
 require('dotenv').config();
 const express = require('express');
@@ -9,8 +9,6 @@ const rateLimit = require('express-rate-limit');
 const { query, validationResult } = require('express-validator');
 const fs = require('fs');
 const path = require('path');
-const ffmpeg = require('fluent-ffmpeg');
-const { promisify } = require('util');
 const { S3Client, GetObjectCommand, ListObjectsV2Command, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -19,21 +17,19 @@ const app = express();
 // --- Server Configuration ---
 const PORT = process.env.PORT || 8000;
 const HOST = process.env.HOST || '0.0.0.0';
-const THUMBNAIL_WIDTH = process.env.THUMBNAIL_WIDTH || 320;
-const THUMBNAIL_HEIGHT = process.env.THUMBNAIL_HEIGHT || 240;
 
 // --- Security Middleware ---
 app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin for video/thumbnails
-    contentSecurityPolicy: false // Disable CSP for video streaming
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false
 }));
 app.use(cors());
-app.use(morgan('combined')); // HTTP request logging
+app.use(morgan('combined'));
 
 // --- Rate Limiting ---
 const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // 100 requests per windowMs
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     message: { error: 'Too many requests, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -45,7 +41,7 @@ const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || 'your-account-id';
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || 'your-access-key-id';
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || 'your-secret-access-key';
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'anime-videos';
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || null; // Optional: jika pakai custom domain
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || null;
 
 const s3Client = new S3Client({
     region: 'auto',
@@ -56,24 +52,21 @@ const s3Client = new S3Client({
     },
 });
 
-// --- Local File and Directory Paths (untuk metadata dan thumbnail cache) ---
+// --- Local File and Directory Paths ---
 const CACHE_DIR = path.join(process.cwd(), "cache");
 const THUMBNAIL_CACHE_DIR = path.join(CACHE_DIR, "thumbnails");
 const METADATA_FILE = path.join(CACHE_DIR, "metadata.json");
-const SERIES_METADATA_FILE = path.join(CACHE_DIR, "series_metadata.json");
 
-// --- App Version and Dialog Control Flags ---
+// --- App Version ---
 const LATEST_APP_VERSION = process.env.APP_VERSION || "1.0.1";
 const SHOW_UPDATE_DIALOG_COMMAND = process.env.SHOW_UPDATE_DIALOG === 'true';
 
-// Ensure directories exist on startup
+// Ensure directories exist
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(THUMBNAIL_CACHE_DIR)) fs.mkdirSync(THUMBNAIL_CACHE_DIR, { recursive: true });
 
-
 // --- R2 Helper Functions ---
 
-// List semua video files dari R2
 async function listR2Videos() {
     const command = new ListObjectsV2Command({
         Bucket: R2_BUCKET_NAME,
@@ -97,7 +90,6 @@ async function listR2Videos() {
     }
 }
 
-// Get metadata dari R2 object
 async function getR2ObjectMetadata(key) {
     const command = new HeadObjectCommand({
         Bucket: R2_BUCKET_NAME,
@@ -112,19 +104,16 @@ async function getR2ObjectMetadata(key) {
             contentType: response.ContentType
         };
     } catch (error) {
-        console.error(`Error getting metadata for ${key}:`, error);
+        // Don't log error for missing thumbnails - it's expected
         return null;
     }
 }
 
-// Generate signed URL untuk video streaming
 async function getSignedVideoUrl(key, expiresIn = 3600) {
-    // Jika pakai public URL, return langsung
     if (R2_PUBLIC_URL) {
         return `${R2_PUBLIC_URL}/${key}`;
     }
 
-    // Jika private, generate signed URL
     const command = new GetObjectCommand({
         Bucket: R2_BUCKET_NAME,
         Key: key,
@@ -139,30 +128,7 @@ async function getSignedVideoUrl(key, expiresIn = 3600) {
     }
 }
 
-// Download file dari R2 ke local (untuk thumbnail generation)
-async function downloadFromR2(key, localPath) {
-    const command = new GetObjectCommand({
-        Bucket: R2_BUCKET_NAME,
-        Key: key,
-    });
-
-    try {
-        const response = await s3Client.send(command);
-        const stream = response.Body;
-        const writeStream = fs.createWriteStream(localPath);
-
-        return new Promise((resolve, reject) => {
-            stream.pipe(writeStream);
-            writeStream.on('finish', () => resolve(true));
-            writeStream.on('error', reject);
-        });
-    } catch (error) {
-        console.error(`Error downloading from R2: ${key}`, error);
-        return false;
-    }
-}
-
-// --- Metadata Handling Functions ---
+// --- Metadata Functions ---
 
 const loadMetadata = () => {
     if (fs.existsSync(METADATA_FILE)) {
@@ -170,7 +136,6 @@ const loadMetadata = () => {
             const data = fs.readFileSync(METADATA_FILE, 'utf-8');
             return JSON.parse(data);
         } catch (error) {
-            console.warn(`Warning: ${METADATA_FILE} is empty or malformed. Returning empty object.`);
             return {};
         }
     }
@@ -181,29 +146,7 @@ const saveMetadata = (metadata) => {
     fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 4), 'utf-8');
 };
 
-const loadSeriesMetadata = () => {
-    if (fs.existsSync(SERIES_METADATA_FILE)) {
-        try {
-            const data = fs.readFileSync(SERIES_METADATA_FILE, 'utf-8');
-            return JSON.parse(data);
-        } catch (error) {
-            console.warn(`Warning: ${SERIES_METADATA_FILE} is empty or malformed. Returning empty object.`);
-            return {};
-        }
-    }
-    return {};
-};
-
-const saveSeriesMetadata = (seriesMetadata) => {
-    fs.writeFileSync(SERIES_METADATA_FILE, JSON.stringify(seriesMetadata, null, 4), 'utf-8');
-};
-
-// --- Filename Parsing Functions ---
-
-const extractEpisodeNumber = (filename) => {
-    const match = filename.match(/E(\d+)/i);
-    return match ? parseInt(match[1], 10) : null;
-};
+// --- Filename Parsing ---
 
 const extractTitleAndEpisode = (filename) => {
     const baseName = path.parse(filename).name;
@@ -216,136 +159,7 @@ const extractTitleAndEpisode = (filename) => {
     return { seriesTitle: baseName.replace(/[._]/g, ' ').trim(), episodeNumber: null };
 };
 
-// --- Thumbnail Generation ---
-
-const generateThumbnail = (videoPath, thumbnailPath) => {
-    return new Promise((resolve, reject) => {
-        ffmpeg(videoPath)
-            .screenshots({
-                timestamps: ['00:00:05.000'],
-                filename: path.basename(thumbnailPath),
-                folder: path.dirname(thumbnailPath),
-                size: `${THUMBNAIL_WIDTH}x${THUMBNAIL_HEIGHT}`
-            })
-            .on('end', () => {
-                console.log(`Thumbnail generated for ${path.basename(videoPath)} at ${thumbnailPath}`);
-                resolve(true);
-            })
-            .on('error', (err) => {
-                console.error(`Error generating thumbnail for ${path.basename(videoPath)}: ${err.message}`);
-                reject(false);
-            });
-    });
-};
-
-// --- Background Thumbnail Generation ---
-
-let thumbnailGenerationInProgress = false;
-let thumbnailGenerationQueue = [];
-
-// Generate thumbnail for a single video using signed URL (no full download needed)
-const generateThumbnailForVideo = async (videoFile) => {
-    const { filename, key } = videoFile;
-    const thumbnailFilename = `${path.parse(filename).name}.png`;
-    const thumbnailCachePath = path.join(THUMBNAIL_CACHE_DIR, thumbnailFilename);
-
-    // Skip if thumbnail already exists
-    if (fs.existsSync(thumbnailCachePath)) {
-        return { filename, status: 'exists' };
-    }
-
-    try {
-        // Get signed URL for the video (valid for 1 hour)
-        const signedUrl = await getSignedVideoUrl(key, 3600);
-        if (!signedUrl) {
-            throw new Error('Could not generate signed URL');
-        }
-
-        console.log(`[Thumbnail] Generating thumbnail from stream: ${filename}`);
-
-        // Use FFmpeg to read directly from signed URL - only fetches first few seconds
-        await new Promise((resolve, reject) => {
-            ffmpeg(signedUrl)
-                .inputOptions([
-                    '-ss', '5',           // Seek to 5 seconds
-                    '-t', '1'             // Only read 1 second of video
-                ])
-                .outputOptions([
-                    '-vframes', '1',      // Extract only 1 frame
-                    '-vf', `scale=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:force_original_aspect_ratio=decrease,pad=${THUMBNAIL_WIDTH}:${THUMBNAIL_HEIGHT}:(ow-iw)/2:(oh-ih)/2`
-                ])
-                .output(thumbnailCachePath)
-                .on('end', () => {
-                    console.log(`[Thumbnail] Generated: ${filename}`);
-                    resolve(true);
-                })
-                .on('error', (err) => {
-                    console.error(`[Thumbnail] FFmpeg error for ${filename}: ${err.message}`);
-                    reject(err);
-                })
-                .run();
-        });
-
-        return { filename, status: 'generated' };
-    } catch (error) {
-        console.error(`[Thumbnail] Failed for ${filename}:`, error.message);
-        return { filename, status: 'failed', error: error.message };
-    }
-};
-
-// Process thumbnail generation queue
-const processThumbnailQueue = async () => {
-    if (thumbnailGenerationInProgress || thumbnailGenerationQueue.length === 0) {
-        return;
-    }
-
-    thumbnailGenerationInProgress = true;
-    console.log(`[Thumbnail] Starting queue processing. ${thumbnailGenerationQueue.length} videos pending.`);
-
-    while (thumbnailGenerationQueue.length > 0) {
-        const videoFile = thumbnailGenerationQueue.shift();
-        const result = await generateThumbnailForVideo(videoFile);
-        console.log(`[Thumbnail] ${result.filename}: ${result.status}`);
-
-        // Small delay between processing to avoid overwhelming the system
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    thumbnailGenerationInProgress = false;
-    console.log(`[Thumbnail] Queue processing complete.`);
-};
-
-// Scan all videos and queue thumbnail generation for missing ones
-const queueMissingThumbnails = async () => {
-    console.log('[Thumbnail] Scanning for missing thumbnails...');
-
-    const videoFiles = await listR2Videos();
-    let queued = 0;
-    let existing = 0;
-
-    for (const videoFile of videoFiles) {
-        const thumbnailFilename = `${path.parse(videoFile.filename).name}.png`;
-        const thumbnailCachePath = path.join(THUMBNAIL_CACHE_DIR, thumbnailFilename);
-
-        if (!fs.existsSync(thumbnailCachePath)) {
-            thumbnailGenerationQueue.push(videoFile);
-            queued++;
-        } else {
-            existing++;
-        }
-    }
-
-    console.log(`[Thumbnail] Found ${existing} existing, ${queued} queued for generation.`);
-
-    // Start processing if there are items in queue
-    if (queued > 0) {
-        processThumbnailQueue();
-    }
-
-    return { existing, queued, total: videoFiles.length };
-};
-
-// --- Helper Function to Get Video Details (Modified for R2) ---
+// --- Get Video Details ---
 
 const getVideoDetails = async (videoFile, metadata) => {
     const { filename, key, lastModified } = videoFile;
@@ -377,25 +191,24 @@ const getVideoDetails = async (videoFile, metadata) => {
         saveMetadata(metadata);
     }
 
-    // Thumbnail handling - only use existing thumbnails, don't generate on-demand
+    // Thumbnail handling - check R2 first, then local cache
+    // Thumbnails must be manually uploaded to R2: videos/thumbnails/{filename}.png
+    // Or placed in local cache: /root/inuvps/cache/thumbnails/{filename}.png
     const thumbnailFilename = `${path.parse(filename).name}.png`;
     const thumbnailCachePath = path.join(THUMBNAIL_CACHE_DIR, thumbnailFilename);
     const thumbnailR2Key = `videos/thumbnails/${thumbnailFilename}`;
 
     let thumbnail_url = null;
 
-    // First, try to get thumbnail from R2 with a signed URL
+    // Check R2 for thumbnail
     const thumbnailMeta = await getR2ObjectMetadata(thumbnailR2Key);
     if (thumbnailMeta) {
-        // Generate signed URL for R2 thumbnail
-        thumbnail_url = await getSignedVideoUrl(thumbnailR2Key, 86400); // 24 hour expiry
+        thumbnail_url = await getSignedVideoUrl(thumbnailR2Key, 86400);
     } else if (fs.existsSync(thumbnailCachePath)) {
-        // Use local cache if available
         thumbnail_url = `/thumbnails/${thumbnailFilename}`;
     }
-    // If no thumbnail exists, leave as null - background queue will generate it
+    // If no thumbnail, returns null - app will show placeholder
 
-    // Generate signed URL untuk video
     const videoUrl = await getSignedVideoUrl(key);
 
     return {
@@ -420,7 +233,6 @@ app.get('/api/show_update_dialog_command', (req, res) => {
     res.json({ show_dialog: SHOW_UPDATE_DIALOG_COMMAND });
 });
 
-// --- Health Check Endpoint ---
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
@@ -589,56 +401,33 @@ app.get('/api/search',
         }
     });
 
-// --- Thumbnail Generation API ---
+// --- Thumbnail List API (for checking what's uploaded) ---
 
-// Get thumbnail generation status
-app.get('/api/thumbnails/status', (req, res) => {
-    res.json({
-        in_progress: thumbnailGenerationInProgress,
-        queue_length: thumbnailGenerationQueue.length,
-        cache_dir: THUMBNAIL_CACHE_DIR
-    });
-});
-
-// Trigger thumbnail generation for all missing thumbnails
-app.post('/api/thumbnails/generate', async (req, res) => {
-    try {
-        const result = await queueMissingThumbnails();
-        res.json({
-            success: true,
-            message: `Thumbnail generation started`,
-            ...result
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// List all cached thumbnails
 app.get('/api/thumbnails/list', (req, res) => {
     try {
         const files = fs.readdirSync(THUMBNAIL_CACHE_DIR);
-        const thumbnails = files.filter(f => f.endsWith('.png')).map(f => ({
+        const thumbnails = files.filter(f => f.endsWith('.png') || f.endsWith('.jpg')).map(f => ({
             filename: f,
             url: `/thumbnails/${f}`
         }));
         res.json({
             count: thumbnails.length,
-            thumbnails
+            thumbnails,
+            upload_instructions: {
+                r2_path: "videos/thumbnails/{video_filename}.png",
+                local_path: "/root/inuvps/cache/thumbnails/{video_filename}.png"
+            }
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// --- Static File Serving ---
+// --- Static File Serving (for local thumbnails) ---
 
 app.use('/thumbnails', express.static(THUMBNAIL_CACHE_DIR));
 
-// --- Video Streaming Route (Modified for R2) ---
+// --- Video Streaming Route ---
 
 app.get('/video/:filename', async (req, res) => {
     const { filename } = req.params;
@@ -649,13 +438,11 @@ app.get('/video/:filename', async (req, res) => {
         return res.status(404).send('File not found');
     }
 
-    // Jika pakai public URL, redirect saja
     if (R2_PUBLIC_URL) {
         const publicUrl = `${R2_PUBLIC_URL}/${videoFile.key}`;
         return res.redirect(publicUrl);
     }
 
-    // Jika private, streaming via signed URL atau proxy
     try {
         const command = new GetObjectCommand({
             Bucket: R2_BUCKET_NAME,
@@ -679,7 +466,6 @@ app.get('/video/:filename', async (req, res) => {
                 'Content-Type': 'video/mp4',
             });
 
-            // Get range dari R2
             const rangeCommand = new GetObjectCommand({
                 Bucket: R2_BUCKET_NAME,
                 Key: videoFile.key,
@@ -700,7 +486,8 @@ app.get('/video/:filename', async (req, res) => {
     }
 });
 
-// --- Global Error Handler ---
+// --- Error Handlers ---
+
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
     res.status(err.status || 500).json({
@@ -709,24 +496,16 @@ app.use((err, req, res, next) => {
     });
 });
 
-// --- 404 Handler ---
 app.use((req, res) => {
     res.status(404).json({ error: 'Not found' });
 });
 
 // --- Start Server ---
 
-app.listen(PORT, HOST, async () => {
+app.listen(PORT, HOST, () => {
     console.log(`✅ Server is running at http://${HOST}:${PORT}`);
     console.log(`📦 R2 Bucket: ${R2_BUCKET_NAME}`);
     console.log(`🔗 R2 Endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
     console.log(`🩺 Health check: http://${HOST}:${PORT}/health`);
-
-    // Start background thumbnail generation
-    console.log('\n🖼️  Starting automatic thumbnail generation...');
-    try {
-        await queueMissingThumbnails();
-    } catch (error) {
-        console.error('Error starting thumbnail generation:', error.message);
-    }
+    console.log(`\n📷 Thumbnails: Upload manually to R2 (videos/thumbnails/) or local cache (/cache/thumbnails/)`);
 });
