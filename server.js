@@ -11,6 +11,11 @@ const fs = require('fs');
 const path = require('path');
 const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffprobePath = require('@ffprobe-installer/ffprobe').path;
+ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfprobePath(ffprobePath);
 
 const app = express();
 
@@ -35,6 +40,7 @@ const apiLimiter = rateLimit({
     legacyHeaders: false,
 });
 app.use('/api/', apiLimiter);
+app.use('/thumbnails', express.static(path.join(process.cwd(), "cache", "thumbnails")));
 
 // --- R2 Configuration ---
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || 'your-account-id';
@@ -55,6 +61,7 @@ const s3Client = new S3Client({
 // --- Local Cache ---
 const CACHE_DIR = path.join(process.cwd(), "cache");
 const METADATA_FILE = path.join(CACHE_DIR, "metadata.json");
+const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
 
 // --- App Version ---
 const LATEST_APP_VERSION = process.env.APP_VERSION || "1.0.1";
@@ -62,6 +69,7 @@ const SHOW_UPDATE_DIALOG_COMMAND = process.env.SHOW_UPDATE_DIALOG === 'true';
 
 // Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+if (!fs.existsSync(THUMBNAIL_DIR)) fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
 
 // --- R2 Helper Functions ---
 
@@ -123,6 +131,58 @@ const saveMetadata = (metadata) => {
     fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 4), 'utf-8');
 };
 
+
+// --- Thumbnail Generation ---
+
+const generatingThumbnails = new Set();
+
+async function generateThumbnail(videoKey, outputFilename) {
+    const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
+    const publicPath = `/thumbnails/${outputFilename}`;
+
+    // Check if thumbnail already exists
+    if (fs.existsSync(outputPath)) {
+        return publicPath;
+    }
+
+    // Check if already generating
+    if (generatingThumbnails.has(outputFilename)) {
+        console.log(`Thumbnail generation already in progress for: ${outputFilename}`);
+        return null;
+    }
+
+    generatingThumbnails.add(outputFilename);
+
+    try {
+        const videoUrl = await getSignedVideoUrl(videoKey, 300); // 5 min expiry
+        if (!videoUrl) return null;
+
+        return new Promise((resolve) => {
+            console.log(`Generating thumbnail for: ${outputFilename}`);
+            ffmpeg(videoUrl)
+                .screenshots({
+                    timestamps: ['20%'], // Take shot at 20% mark
+                    filename: outputFilename,
+                    folder: THUMBNAIL_DIR,
+                    size: '320x180' // Standard thumbnail size
+                })
+                .on('end', () => {
+                    console.log(`Thumbnail generated: ${outputFilename}`);
+                    resolve(publicPath);
+                })
+                .on('error', (err) => {
+                    console.error(`Error generating thumbnail for ${outputFilename}:`, err.message);
+                    resolve(null);
+                });
+        });
+    } catch (error) {
+        console.error(`Error in generateThumbnail wrapper for ${outputFilename}:`, error.message);
+        return null;
+    } finally {
+        generatingThumbnails.delete(outputFilename);
+    }
+}
+
 // --- Filename Parsing ---
 
 const extractTitleAndEpisode = (filename) => {
@@ -178,10 +238,22 @@ const getVideoDetails = async (videoFile, metadata) => {
 
     const videoUrl = await getSignedVideoUrl(key);
 
+    // Generate/Get Thumbnail
+    const thumbnailFilename = `${filename.replace(/\.[^/.]+$/, "")}.jpg`;
+    const thumbnailPath = path.join(THUMBNAIL_DIR, thumbnailFilename);
+    let thumbnailUrl = null;
+
+    if (fs.existsSync(thumbnailPath)) {
+        thumbnailUrl = `/thumbnails/${thumbnailFilename}`;
+    } else {
+        // Trigger generation in background without awaiting
+        generateThumbnail(key, thumbnailFilename);
+    }
+
     return {
         filename,
         url: videoUrl || `/video/${filename}`,
-        thumbnail_url: null,  // No thumbnails - app will use placeholder
+        thumbnail_url: thumbnailUrl,
         last_modified: fileMtime,
         display_title,
         episode_number,
@@ -304,7 +376,7 @@ app.get('/api/series', async (req, res) => {
     let result = Array.from(seriesInfo.entries()).map(([title, info]) => ({
         series_title: title,
         video_count: info.count,
-        thumbnail_url: null,  // No thumbnails
+        thumbnail_url: `/thumbnails/${info.series_title.replace(/\s+/g, '_')}_cover.jpg`, // Placeholder logic if we wanted series covers
         last_modified: info.last_modified,
         description: info.description
     }));
