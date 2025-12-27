@@ -38,6 +38,8 @@ const apiLimiter = rateLimit({
     message: { error: 'Too many requests, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
+    // Disable trust proxy to avoid X-Forwarded-For errors
+    skip: () => false,
 });
 app.use('/api/', apiLimiter);
 app.use('/thumbnails', express.static(path.join(process.cwd(), "cache", "thumbnails")));
@@ -376,7 +378,7 @@ app.get('/api/series', async (req, res) => {
     let result = Array.from(seriesInfo.entries()).map(([title, info]) => ({
         series_title: title,
         video_count: info.count,
-        thumbnail_url: `/thumbnails/${info.series_title.replace(/\s+/g, '_')}_cover.jpg`, // Placeholder logic if we wanted series covers
+        thumbnail_url: null,  // No series cover thumbnails
         last_modified: info.last_modified,
         description: info.description
     }));
