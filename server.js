@@ -190,7 +190,7 @@ async function generateThumbnail(videoKey, outputFilename) {
 const extractTitleAndEpisode = (filename) => {
     const baseName = path.parse(filename).name;
 
-    // Try pattern: SeriesName--EpisodeNumber (e.g., "ReZero--22_720p")
+    // Try pattern: SeriesName--EpisodeNumber (e.g., "ReZero--22_720p" or "ReZero--25_End_720p")
     let match = baseName.match(/^(.+?)--(\d+)/);
     if (match) {
         return {
@@ -333,13 +333,20 @@ app.get('/api/videos', async (req, res) => {
         videoFiles.map(file => getVideoDetails(file, metadata))
     )).filter(Boolean);
 
-    allVideosData.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
-
     const { series_title } = req.query;
     if (series_title) {
         allVideosData = allVideosData.filter(v =>
             v.series_title && v.series_title.toLowerCase() === series_title.toLowerCase()
         );
+        // Sort by episode number for series view
+        allVideosData.sort((a, b) => {
+            const epA = a.episode_number !== null ? a.episode_number : Infinity;
+            const epB = b.episode_number !== null ? b.episode_number : Infinity;
+            return epA !== epB ? epA - epB : a.filename.localeCompare(b.filename);
+        });
+    } else {
+        // Sort by last_modified for general list
+        allVideosData.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
     }
 
     res.json(allVideosData);
