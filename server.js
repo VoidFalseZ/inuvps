@@ -240,17 +240,19 @@ const getVideoDetails = async (videoFile, metadata) => {
 
     const videoUrl = await getSignedVideoUrl(key);
 
-    // DISABLED: Thumbnail generation causes ffprobe crashes on VPS
-    // const thumbnailFilename = `${filename.replace(/\.[^/.]+$/, "")}.jpg`;
-    // const thumbnailPath = path.join(THUMBNAIL_DIR, thumbnailFilename);
+    // Check for existing thumbnails (both .png and .jpg)
+    const baseFilename = filename.replace(/\.[^/.]+$/, "");
     let thumbnailUrl = null;
 
-    // if (fs.existsSync(thumbnailPath)) {
-    //     thumbnailUrl = `/thumbnails/${thumbnailFilename}`;
-    // } else {
-    //     // Trigger generation in background without awaiting
-    //     generateThumbnail(key, thumbnailFilename);
-    // }
+    const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
+    const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
+
+    if (fs.existsSync(pngPath)) {
+        thumbnailUrl = `/thumbnails/${baseFilename}.png`;
+    } else if (fs.existsSync(jpgPath)) {
+        thumbnailUrl = `/thumbnails/${baseFilename}.jpg`;
+    }
+    // Note: Automatic thumbnail generation is disabled for VPS stability
 
     return {
         filename,
