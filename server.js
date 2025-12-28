@@ -365,17 +365,26 @@ app.get('/api/series', async (req, res) => {
 
     for (const video of allVideoDetails) {
         if (video && video.series_title) {
-            const { series_title, last_modified, description } = video;
+            const { series_title, last_modified, description, thumbnail_url, episode_number } = video;
             if (!seriesInfo.has(series_title)) {
                 seriesInfo.set(series_title, {
                     count: 0,
                     last_modified: '1970-01-01 00:00:00',
-                    description: "No description available."
+                    description: "No description available.",
+                    thumbnail_url: null,
+                    first_episode: Infinity
                 });
             }
 
             const currentSeries = seriesInfo.get(series_title);
             currentSeries.count++;
+
+            // Use thumbnail from the lowest episode number (first episode) as series cover
+            const epNum = episode_number !== null ? episode_number : Infinity;
+            if (epNum < currentSeries.first_episode && thumbnail_url) {
+                currentSeries.thumbnail_url = thumbnail_url;
+                currentSeries.first_episode = epNum;
+            }
 
             if (new Date(last_modified) > new Date(currentSeries.last_modified)) {
                 currentSeries.last_modified = last_modified;
@@ -387,7 +396,7 @@ app.get('/api/series', async (req, res) => {
     let result = Array.from(seriesInfo.entries()).map(([title, info]) => ({
         series_title: title,
         video_count: info.count,
-        thumbnail_url: null,  // No series cover thumbnails
+        thumbnail_url: info.thumbnail_url,
         last_modified: info.last_modified,
         description: info.description
     }));
