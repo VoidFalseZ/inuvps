@@ -64,14 +64,53 @@ const s3Client = new S3Client({
 const CACHE_DIR = path.join(process.cwd(), "cache");
 const METADATA_FILE = path.join(CACHE_DIR, "metadata.json");
 const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
+const ADMIN_CONFIG_FILE = path.join(CACHE_DIR, "admin_config.json");
 
-// --- App Version ---
-const LATEST_APP_VERSION = process.env.APP_VERSION || "1.0.1";
-const SHOW_UPDATE_DIALOG_COMMAND = process.env.SHOW_UPDATE_DIALOG === 'true';
+// --- Default Admin Config ---
+const DEFAULT_ADMIN_CONFIG = {
+    app_version: {
+        latest: "1.0.1",
+        minimum: "1.0.0",
+        force_update: false
+    },
+    update_dialog: {
+        enabled: false,
+        title: "Update Available",
+        message: "A new version of InuPoi is available!",
+        update_url: ""
+    },
+    notifications: [],
+    maintenance: {
+        enabled: false,
+        message: "Server is under maintenance. Please try again later."
+    }
+};
+
+// --- Load Admin Config ---
+const loadAdminConfig = () => {
+    try {
+        if (fs.existsSync(ADMIN_CONFIG_FILE)) {
+            const data = fs.readFileSync(ADMIN_CONFIG_FILE, 'utf8');
+            return { ...DEFAULT_ADMIN_CONFIG, ...JSON.parse(data) };
+        }
+    } catch (error) {
+        console.error('Error loading admin config:', error.message);
+    }
+    return DEFAULT_ADMIN_CONFIG;
+};
+
+// --- Save Default Admin Config if not exists ---
+const initAdminConfig = () => {
+    if (!fs.existsSync(ADMIN_CONFIG_FILE)) {
+        fs.writeFileSync(ADMIN_CONFIG_FILE, JSON.stringify(DEFAULT_ADMIN_CONFIG, null, 2));
+        console.log('Created default admin_config.json');
+    }
+};
 
 // Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(THUMBNAIL_DIR)) fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
+initAdminConfig();
 
 // --- R2 Helper Functions ---
 
@@ -268,21 +307,66 @@ const getVideoDetails = async (videoFile, metadata) => {
 
 // --- API Routes ---
 
+// Combined app config endpoint
+app.get('/api/app_config', (req, res) => {
+    const config = loadAdminConfig();
+
+    // Filter out expired notifications
+    const now = new Date();
+    const activeNotifications = (config.notifications || []).filter(n => {
+        if (!n.enabled) return false;
+        if (n.expires && new Date(n.expires) < now) return false;
+        return true;
+    });
+
+    res.json({
+        app_version: config.app_version,
+        update_dialog: config.update_dialog,
+        notifications: activeNotifications,
+        maintenance: config.maintenance
+    });
+});
+
+// Notifications endpoint
+app.get('/api/notifications', (req, res) => {
+    const config = loadAdminConfig();
+    const now = new Date();
+
+    const activeNotifications = (config.notifications || []).filter(n => {
+        if (!n.enabled) return false;
+        if (n.expires && new Date(n.expires) < now) return false;
+        return true;
+    });
+
+    res.json(activeNotifications);
+});
+
+// Update dialog endpoint
+app.get('/api/update_dialog', (req, res) => {
+    const config = loadAdminConfig();
+    res.json(config.update_dialog);
+});
+
+// Legacy endpoints (backward compatibility)
 app.get('/api/app_version', (req, res) => {
-    res.json({ latest_version: LATEST_APP_VERSION });
+    const config = loadAdminConfig();
+    res.json({ latest_version: config.app_version.latest });
 });
 
 app.get('/api/show_update_dialog_command', (req, res) => {
-    res.json({ show_dialog: SHOW_UPDATE_DIALOG_COMMAND });
+    const config = loadAdminConfig();
+    res.json({ show_dialog: config.update_dialog.enabled });
 });
 
 app.get('/health', (req, res) => {
+    const config = loadAdminConfig();
     res.json({
-        status: 'ok',
+        status: config.maintenance.enabled ? 'maintenance' : 'ok',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        version: LATEST_APP_VERSION,
-        r2_bucket: R2_BUCKET_NAME
+        version: config.app_version.latest,
+        r2_bucket: R2_BUCKET_NAME,
+        maintenance: config.maintenance.enabled
     });
 });
 
