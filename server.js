@@ -12,10 +12,26 @@ const path = require('path');
 const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const ffprobePath = require('@ffprobe-installer/ffprobe').path;
+const { execSync } = require('child_process');
+
+// Try to use system FFmpeg first (more stable for streaming), fallback to npm package
+let ffmpegPath, ffprobePath;
+try {
+    // Check if system ffmpeg exists
+    execSync('which ffmpeg', { stdio: 'ignore' });
+    execSync('which ffprobe', { stdio: 'ignore' });
+    ffmpegPath = 'ffmpeg';
+    ffprobePath = 'ffprobe';
+    console.log('[FFmpeg] Using system FFmpeg');
+} catch {
+    // Fallback to npm package
+    ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+    ffprobePath = require('@ffprobe-installer/ffprobe').path;
+    console.log('[FFmpeg] Using npm package FFmpeg');
+}
 ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath);
+
 
 const app = express();
 
