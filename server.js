@@ -271,6 +271,7 @@ const saveMetadata = (metadata) => {
 // --- Thumbnail Generation ---
 
 const generatingThumbnails = new Set();
+const MAX_CONCURRENT_THUMBNAILS = 2; // Limit concurrent generations to protect VPS
 
 async function generateThumbnail(videoKey, outputFilename) {
     const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
@@ -287,11 +288,18 @@ async function generateThumbnail(videoKey, outputFilename) {
         return null;
     }
 
+    // Limit concurrent generations to protect VPS resources
+    if (generatingThumbnails.size >= MAX_CONCURRENT_THUMBNAILS) {
+        console.log(`Thumbnail generation queue full, skipping: ${outputFilename}`);
+        return null;
+    }
+
     generatingThumbnails.add(outputFilename);
 
     try {
         const videoUrl = await getSignedVideoUrl(videoKey, 300); // 5 min expiry
         if (!videoUrl) return null;
+
 
         return new Promise((resolve) => {
             console.log(`Generating thumbnail for: ${outputFilename}`);
@@ -385,8 +393,17 @@ const getVideoDetails = async (videoFile, metadata) => {
         thumbnailUrl = `/thumbnails/${baseFilename}.png`;
     } else if (fs.existsSync(jpgPath)) {
         thumbnailUrl = `/thumbnails/${baseFilename}.jpg`;
+    } else {
+        // Lazy thumbnail generation: generate once on first access (fire-and-forget)
+        // This runs in background and doesn't block the response
+        generateThumbnail(key, `${baseFilename}.png`).then(generatedUrl => {
+            if (generatedUrl) {
+                console.log(`[Thumbnail] Generated for: ${baseFilename}`);
+            }
+        }).catch(err => {
+            console.error(`[Thumbnail] Error generating for ${baseFilename}:`, err.message);
+        });
     }
-    // Note: Automatic thumbnail generation is disabled for VPS stability
 
     return {
         filename,
