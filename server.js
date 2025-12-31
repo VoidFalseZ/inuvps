@@ -29,6 +29,7 @@ app.use(helmet({
     contentSecurityPolicy: false
 }));
 app.use(cors());
+app.use(express.json()); // Parse JSON bodies for heartbeat endpoint
 app.use(morgan('combined'));
 
 // --- Rate Limiting ---
@@ -65,6 +66,99 @@ const CACHE_DIR = path.join(process.cwd(), "cache");
 const METADATA_FILE = path.join(CACHE_DIR, "metadata.json");
 const THUMBNAIL_DIR = path.join(CACHE_DIR, "thumbnails");
 const ADMIN_CONFIG_FILE = path.join(CACHE_DIR, "admin_config.json");
+const ACTIVITY_LOG_FILE = path.join(CACHE_DIR, "activity_log.json");
+const SESSIONS_FILE = path.join(CACHE_DIR, "sessions.json");
+
+// --- Admin API Key (set in .env or use default for development) ---
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'inupoi-admin-2024';
+
+// --- User Activity Tracking ---
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes inactive = offline
+const ACTIVITY_LOG_MAX = 1000; // Max activity log entries
+const activeSessions = new Map(); // deviceId -> session data
+let activityLog = []; // Recent activity history
+let dailyStats = {
+    date: new Date().toISOString().split('T')[0],
+    peak_online: 0,
+    total_sessions: 0,
+    unique_devices: new Set()
+};
+
+// --- Load persisted activity data ---
+const loadActivityData = () => {
+    try {
+        if (fs.existsSync(ACTIVITY_LOG_FILE)) {
+            activityLog = JSON.parse(fs.readFileSync(ACTIVITY_LOG_FILE, 'utf8'));
+        }
+        if (fs.existsSync(SESSIONS_FILE)) {
+            const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+            // Restore sessions that are still valid
+            const now = Date.now();
+            for (const [deviceId, session] of Object.entries(sessions)) {
+                if (now - new Date(session.lastSeen).getTime() < SESSION_TIMEOUT_MS) {
+                    activeSessions.set(deviceId, session);
+                }
+            }
+            console.log(`Restored ${activeSessions.size} active sessions`);
+        }
+    } catch (error) {
+        console.error('Error loading activity data:', error.message);
+    }
+};
+
+const saveActivityData = () => {
+    try {
+        fs.writeFileSync(ACTIVITY_LOG_FILE, JSON.stringify(activityLog, null, 2));
+        fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(activeSessions), null, 2));
+    } catch (error) {
+        console.error('Error saving activity data:', error.message);
+    }
+};
+
+// Save activity data periodically (every 30 seconds)
+setInterval(saveActivityData, 30000);
+
+// --- Admin Auth Middleware ---
+const adminAuth = (req, res, next) => {
+    const apiKey = req.headers['x-admin-key'] || req.query.api_key;
+    if (apiKey !== ADMIN_API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized. Invalid or missing admin API key.' });
+    }
+    next();
+};
+
+// --- Log Activity Helper ---
+const logActivity = (deviceId, event, details = {}) => {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        device_id: deviceId,
+        event,
+        details
+    };
+    activityLog.unshift(entry); // Add to beginning
+    if (activityLog.length > ACTIVITY_LOG_MAX) {
+        activityLog = activityLog.slice(0, ACTIVITY_LOG_MAX);
+    }
+};
+
+// --- Update Daily Stats ---
+const updateDailyStats = () => {
+    const today = new Date().toISOString().split('T')[0];
+    if (dailyStats.date !== today) {
+        // Reset for new day
+        dailyStats = {
+            date: today,
+            peak_online: 0,
+            total_sessions: 0,
+            unique_devices: new Set()
+        };
+    }
+    const currentOnline = activeSessions.size;
+    if (currentOnline > dailyStats.peak_online) {
+        dailyStats.peak_online = currentOnline;
+    }
+};
+
 
 // --- Default Admin Config ---
 const DEFAULT_ADMIN_CONFIG = {
@@ -111,6 +205,7 @@ const initAdminConfig = () => {
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(THUMBNAIL_DIR)) fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
 initAdminConfig();
+loadActivityData(); // Restore persisted sessions and activity log
 
 // --- R2 Helper Functions ---
 
@@ -366,9 +461,155 @@ app.get('/health', (req, res) => {
         uptime: process.uptime(),
         version: config.app_version.latest,
         r2_bucket: R2_BUCKET_NAME,
-        maintenance: config.maintenance.enabled
+        maintenance: config.maintenance.enabled,
+        online_users: activeSessions.size
     });
 });
+
+// --- User Activity Endpoints ---
+
+// Heartbeat - client sends this every 30 seconds to stay online
+app.post('/api/heartbeat', (req, res) => {
+    const { device_id, platform, app_version, event, details } = req.body;
+
+    if (!device_id) {
+        return res.status(400).json({ error: 'device_id is required' });
+    }
+
+    const now = new Date();
+    const isNewSession = !activeSessions.has(device_id);
+
+    // Update or create session
+    const session = activeSessions.get(device_id) || {
+        deviceId: device_id,
+        platform: platform || 'unknown',
+        appVersion: app_version || 'unknown',
+        firstSeen: now.toISOString(),
+        currentActivity: null,
+        currentVideo: null
+    };
+
+    session.lastSeen = now.toISOString();
+    session.platform = platform || session.platform;
+    session.appVersion = app_version || session.appVersion;
+
+    // Track video watching
+    if (event === 'video_play' && details?.video) {
+        session.currentActivity = 'watching';
+        session.currentVideo = details.video;
+    } else if (event === 'video_pause' || event === 'video_stop') {
+        session.currentActivity = 'browsing';
+        session.currentVideo = null;
+    } else if (event === 'app_open' || event === 'app_resume') {
+        session.currentActivity = 'browsing';
+    } else if (event === 'app_background') {
+        session.currentActivity = 'background';
+    }
+
+    activeSessions.set(device_id, session);
+
+    // Log activity event
+    if (event) {
+        logActivity(device_id, event, details || {});
+    } else if (isNewSession) {
+        logActivity(device_id, 'session_start', { platform, app_version });
+        dailyStats.total_sessions++;
+        dailyStats.unique_devices.add(device_id);
+    }
+
+    updateDailyStats();
+
+    res.json({
+        success: true,
+        server_time: now.toISOString(),
+        session_active: true
+    });
+});
+
+// Clean up inactive sessions periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [deviceId, session] of activeSessions.entries()) {
+        if (now - new Date(session.lastSeen).getTime() > SESSION_TIMEOUT_MS) {
+            logActivity(deviceId, 'session_timeout', {});
+            activeSessions.delete(deviceId);
+        }
+    }
+}, 60000); // Check every minute
+
+// --- Admin Monitoring Endpoints ---
+
+// Get online users list
+app.get('/api/admin/users/online', adminAuth, (req, res) => {
+    const now = Date.now();
+    const users = [];
+
+    for (const [deviceId, session] of activeSessions.entries()) {
+        const onlineDuration = Math.floor((now - new Date(session.firstSeen).getTime()) / 60000);
+        users.push({
+            device_id: deviceId,
+            platform: session.platform,
+            app_version: session.appVersion,
+            last_seen: session.lastSeen,
+            first_seen: session.firstSeen,
+            online_duration_minutes: onlineDuration,
+            current_activity: session.currentActivity || 'idle',
+            current_video: session.currentVideo
+        });
+    }
+
+    // Sort by last seen (most recent first)
+    users.sort((a, b) => new Date(b.last_seen) - new Date(a.last_seen));
+
+    res.json({
+        online_count: users.length,
+        users
+    });
+});
+
+// Get user statistics
+app.get('/api/admin/users/stats', adminAuth, (req, res) => {
+    const platformBreakdown = {};
+    const versionBreakdown = {};
+    let watchingCount = 0;
+
+    for (const session of activeSessions.values()) {
+        platformBreakdown[session.platform] = (platformBreakdown[session.platform] || 0) + 1;
+        versionBreakdown[session.appVersion] = (versionBreakdown[session.appVersion] || 0) + 1;
+        if (session.currentActivity === 'watching') {
+            watchingCount++;
+        }
+    }
+
+    res.json({
+        current_online: activeSessions.size,
+        currently_watching: watchingCount,
+        peak_today: dailyStats.peak_online,
+        total_sessions_today: dailyStats.total_sessions,
+        unique_devices_today: dailyStats.unique_devices.size,
+        platform_breakdown: platformBreakdown,
+        version_breakdown: versionBreakdown,
+        date: dailyStats.date
+    });
+});
+
+// Get activity log
+app.get('/api/admin/activity/log', adminAuth, (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const eventFilter = req.query.event; // Optional filter by event type
+
+    let filtered = activityLog;
+    if (eventFilter) {
+        filtered = activityLog.filter(a => a.event === eventFilter);
+    }
+
+    res.json({
+        total: activityLog.length,
+        showing: Math.min(limit, filtered.length),
+        activities: filtered.slice(0, limit)
+    });
+});
+
 
 app.get('/', async (req, res) => {
     const videoFiles = await listR2Videos();
