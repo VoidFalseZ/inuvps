@@ -225,7 +225,21 @@ loadActivityData(); // Restore persisted sessions and activity log
 
 // --- R2 Helper Functions ---
 
-async function listR2Videos() {
+// --- R2 Video List Cache ---
+const r2Cache = {
+    videos: null,
+    lastFetched: 0,
+    ttlMs: 60 * 1000, // 60 seconds cache TTL
+};
+
+async function listR2Videos(forceRefresh = false) {
+    const now = Date.now();
+
+    // Return cached data if still valid
+    if (!forceRefresh && r2Cache.videos && (now - r2Cache.lastFetched) < r2Cache.ttlMs) {
+        return r2Cache.videos;
+    }
+
     const command = new ListObjectsV2Command({
         Bucket: R2_BUCKET_NAME,
         Prefix: '',
@@ -241,9 +255,20 @@ async function listR2Videos() {
                 lastModified: item.LastModified,
                 size: item.Size
             }));
+
+        // Update cache
+        r2Cache.videos = videoFiles;
+        r2Cache.lastFetched = now;
+        console.log(`[R2 Cache] Refreshed video list: ${videoFiles.length} videos`);
+
         return videoFiles;
     } catch (error) {
         console.error('Error listing R2 videos:', error.message);
+        // Return stale cache if available on error
+        if (r2Cache.videos) {
+            console.log('[R2 Cache] Returning stale cache due to error');
+            return r2Cache.videos;
+        }
         return [];
     }
 }
