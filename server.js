@@ -179,7 +179,7 @@ const updateDailyStats = () => {
 // --- Default Admin Config ---
 const DEFAULT_ADMIN_CONFIG = {
     app_version: {
-        latest: "1.0.1",
+        latest: "1.0.2",
         minimum: "1.0.0",
         force_update: false
     },
@@ -668,6 +668,564 @@ app.get('/api/admin/activity/log', adminAuth, (req, res) => {
     });
 });
 
+// --- Admin Config Management ---
+
+// Get current admin config
+app.get('/api/admin/config', adminAuth, (req, res) => {
+    res.json(loadAdminConfig());
+});
+
+// Update admin config
+app.post('/api/admin/config', adminAuth, (req, res) => {
+    try {
+        const currentConfig = loadAdminConfig();
+        const updatedConfig = { ...currentConfig, ...req.body };
+        fs.writeFileSync(ADMIN_CONFIG_FILE, JSON.stringify(updatedConfig, null, 2));
+        res.json({ success: true, config: updatedConfig });
+    } catch (error) {
+        console.error('Error saving admin config:', error.message);
+        res.status(500).json({ error: 'Failed to save config' });
+    }
+});
+
+// --- Admin Dashboard UI ---
+
+// Admin Login Page
+app.get('/admin', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>InuPoi Admin Login</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .login-container {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 40px;
+                width: 100%;
+                max-width: 400px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            h1 {
+                color: #fff;
+                text-align: center;
+                margin-bottom: 10px;
+                font-size: 28px;
+            }
+            .subtitle {
+                color: #888;
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            label {
+                display: block;
+                color: #aaa;
+                margin-bottom: 8px;
+                font-size: 14px;
+            }
+            input {
+                width: 100%;
+                padding: 14px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                background: rgba(0, 0, 0, 0.3);
+                color: #fff;
+                font-size: 16px;
+                transition: border-color 0.3s;
+            }
+            input:focus {
+                outline: none;
+                border-color: #4CAF50;
+            }
+            button {
+                width: 100%;
+                padding: 14px;
+                background: linear-gradient(135deg, #4CAF50, #45a049);
+                border: none;
+                border-radius: 10px;
+                color: #fff;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 5px 20px rgba(76, 175, 80, 0.4);
+            }
+            .error {
+                background: rgba(244, 67, 54, 0.2);
+                border: 1px solid #f44336;
+                color: #f44336;
+                padding: 12px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                text-align: center;
+                display: none;
+            }
+            .logo { font-size: 48px; text-align: center; margin-bottom: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="login-container">
+            <div class="logo">🎬</div>
+            <h1>InuPoi Admin</h1>
+            <p class="subtitle">Enter your admin API key to continue</p>
+            <div class="error" id="error"></div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="apiKey">Admin API Key</label>
+                    <input type="password" id="apiKey" placeholder="Enter your API key" required>
+                </div>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+        <script>
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const apiKey = document.getElementById('apiKey').value;
+                const errorDiv = document.getElementById('error');
+                
+                try {
+                    const res = await fetch('/api/admin/config?api_key=' + encodeURIComponent(apiKey));
+                    if (res.ok) {
+                        sessionStorage.setItem('adminApiKey', apiKey);
+                        window.location.href = '/admin/dashboard';
+                    } else {
+                        errorDiv.textContent = 'Invalid API key';
+                        errorDiv.style.display = 'block';
+                    }
+                } catch (err) {
+                    errorDiv.textContent = 'Connection error';
+                    errorDiv.style.display = 'block';
+                }
+            });
+        </script>
+    </body>
+    </html>
+    `);
+});
+
+// Admin Dashboard Page
+app.get('/admin/dashboard', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>InuPoi Admin Dashboard</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: #0f0f1a;
+                color: #fff;
+                min-height: 100vh;
+            }
+            .header {
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                padding: 20px 30px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid rgba(255,255,255,0.1);
+            }
+            .header h1 { font-size: 24px; }
+            .header .status { display: flex; gap: 20px; align-items: center; }
+            .online-badge {
+                background: #4CAF50;
+                padding: 8px 16px;
+                border-radius: 20px;
+                font-weight: 600;
+                font-size: 14px;
+            }
+            .logout-btn {
+                background: rgba(244, 67, 54, 0.2);
+                border: 1px solid #f44336;
+                color: #f44336;
+                padding: 8px 16px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+            }
+            .container { padding: 30px; max-width: 1400px; margin: 0 auto; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
+            .card {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 16px;
+                padding: 24px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .card h2 {
+                font-size: 16px;
+                color: #888;
+                margin-bottom: 16px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            .stat-value { font-size: 48px; font-weight: 700; color: #4CAF50; }
+            .stat-label { color: #666; margin-top: 5px; }
+            .form-group { margin-bottom: 16px; }
+            .form-group label { display: block; color: #aaa; margin-bottom: 6px; font-size: 14px; }
+            .form-group input, .form-group textarea, .form-group select {
+                width: 100%;
+                padding: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                background: rgba(0, 0, 0, 0.3);
+                color: #fff;
+                font-size: 14px;
+            }
+            .form-group textarea { min-height: 80px; resize: vertical; }
+            .toggle {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .toggle input[type="checkbox"] {
+                width: 50px;
+                height: 26px;
+                appearance: none;
+                background: #333;
+                border-radius: 13px;
+                position: relative;
+                cursor: pointer;
+            }
+            .toggle input[type="checkbox"]::before {
+                content: '';
+                position: absolute;
+                width: 22px;
+                height: 22px;
+                background: #fff;
+                border-radius: 50%;
+                top: 2px;
+                left: 2px;
+                transition: 0.3s;
+            }
+            .toggle input[type="checkbox"]:checked {
+                background: #4CAF50;
+            }
+            .toggle input[type="checkbox"]:checked::before {
+                left: 26px;
+            }
+            .btn {
+                padding: 12px 24px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                transition: transform 0.2s;
+            }
+            .btn:hover { transform: translateY(-2px); }
+            .btn-primary { background: #4CAF50; color: #fff; }
+            .btn-danger { background: #f44336; color: #fff; }
+            .user-list { max-height: 400px; overflow-y: auto; }
+            .user-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 12px;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 8px;
+                margin-bottom: 8px;
+            }
+            .user-info { flex: 1; }
+            .user-id { font-family: monospace; font-size: 12px; color: #888; }
+            .user-activity {
+                padding: 4px 10px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            .activity-watching { background: #4CAF50; color: #fff; }
+            .activity-browsing { background: #2196F3; color: #fff; }
+            .activity-idle { background: #666; color: #fff; }
+            .toast {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                padding: 16px 24px;
+                border-radius: 8px;
+                color: #fff;
+                font-weight: 600;
+                z-index: 1000;
+                animation: slideIn 0.3s ease;
+            }
+            .toast-success { background: #4CAF50; }
+            .toast-error { background: #f44336; }
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            .section-title {
+                font-size: 20px;
+                margin-bottom: 20px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid rgba(255,255,255,0.1);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🎬 InuPoi Admin Dashboard</h1>
+            <div class="status">
+                <div class="online-badge" id="onlineCount">0 Online</div>
+                <button class="logout-btn" onclick="logout()">Logout</button>
+            </div>
+        </div>
+        
+        <div class="container">
+            <!-- Stats Grid -->
+            <div class="grid">
+                <div class="card">
+                    <h2>Current Online</h2>
+                    <div class="stat-value" id="statOnline">0</div>
+                    <div class="stat-label">Active users right now</div>
+                </div>
+                <div class="card">
+                    <h2>Watching Videos</h2>
+                    <div class="stat-value" id="statWatching">0</div>
+                    <div class="stat-label">Currently streaming</div>
+                </div>
+                <div class="card">
+                    <h2>Peak Today</h2>
+                    <div class="stat-value" id="statPeak">0</div>
+                    <div class="stat-label">Maximum concurrent users</div>
+                </div>
+                <div class="card">
+                    <h2>Total Videos</h2>
+                    <div class="stat-value" id="statVideos">0</div>
+                    <div class="stat-label">In R2 bucket</div>
+                </div>
+            </div>
+
+            <!-- Config Section -->
+            <h2 class="section-title">⚙️ App Configuration</h2>
+            <div class="grid">
+                <div class="card">
+                    <h2>App Version</h2>
+                    <div class="form-group">
+                        <label>Latest Version</label>
+                        <input type="text" id="latestVersion" placeholder="1.0.3">
+                    </div>
+                    <div class="form-group">
+                        <label>Minimum Version</label>
+                        <input type="text" id="minimumVersion" placeholder="1.0.0">
+                    </div>
+                    <div class="form-group toggle">
+                        <input type="checkbox" id="forceUpdate">
+                        <label>Force Update</label>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Update Dialog</h2>
+                    <div class="form-group toggle">
+                        <input type="checkbox" id="updateEnabled">
+                        <label>Show Update Dialog</label>
+                    </div>
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="updateTitle" placeholder="Update Available">
+                    </div>
+                    <div class="form-group">
+                        <label>Message</label>
+                        <textarea id="updateMessage" placeholder="A new version is available!"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Update URL</label>
+                        <input type="text" id="updateUrl" placeholder="https://...">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Maintenance Mode</h2>
+                    <div class="form-group toggle">
+                        <input type="checkbox" id="maintenanceEnabled">
+                        <label>Enable Maintenance</label>
+                    </div>
+                    <div class="form-group">
+                        <label>Maintenance Message</label>
+                        <textarea id="maintenanceMessage" placeholder="Server is under maintenance..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveConfig()" style="margin-bottom: 30px;">💾 Save Configuration</button>
+
+            <!-- Online Users Section -->
+            <h2 class="section-title">👥 Online Users</h2>
+            <div class="card">
+                <div class="user-list" id="userList">
+                    <p style="color: #666;">Loading users...</p>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const apiKey = sessionStorage.getItem('adminApiKey');
+            if (!apiKey) {
+                window.location.href = '/admin';
+            }
+
+            function api(endpoint) {
+                return fetch(endpoint + (endpoint.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(apiKey));
+            }
+
+            function apiPost(endpoint, data) {
+                return fetch(endpoint + '?api_key=' + encodeURIComponent(apiKey), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            }
+
+            function showToast(message, type = 'success') {
+                const toast = document.createElement('div');
+                toast.className = 'toast toast-' + type;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }
+
+            function logout() {
+                sessionStorage.removeItem('adminApiKey');
+                window.location.href = '/admin';
+            }
+
+            async function loadStats() {
+                try {
+                    const [statsRes, videosRes] = await Promise.all([
+                        api('/api/admin/users/stats'),
+                        api('/api/videos')
+                    ]);
+                    const stats = await statsRes.json();
+                    const videos = await videosRes.json();
+
+                    document.getElementById('statOnline').textContent = stats.current_online;
+                    document.getElementById('statWatching').textContent = stats.currently_watching;
+                    document.getElementById('statPeak').textContent = stats.peak_today;
+                    document.getElementById('statVideos').textContent = videos.length;
+                    document.getElementById('onlineCount').textContent = stats.current_online + ' Online';
+                } catch (err) {
+                    console.error('Failed to load stats:', err);
+                }
+            }
+
+            async function loadConfig() {
+                try {
+                    const res = await api('/api/admin/config');
+                    const config = await res.json();
+
+                    document.getElementById('latestVersion').value = config.app_version?.latest || '';
+                    document.getElementById('minimumVersion').value = config.app_version?.minimum || '';
+                    document.getElementById('forceUpdate').checked = config.app_version?.force_update || false;
+
+                    document.getElementById('updateEnabled').checked = config.update_dialog?.enabled || false;
+                    document.getElementById('updateTitle').value = config.update_dialog?.title || '';
+                    document.getElementById('updateMessage').value = config.update_dialog?.message || '';
+                    document.getElementById('updateUrl').value = config.update_dialog?.update_url || '';
+
+                    document.getElementById('maintenanceEnabled').checked = config.maintenance?.enabled || false;
+                    document.getElementById('maintenanceMessage').value = config.maintenance?.message || '';
+                } catch (err) {
+                    console.error('Failed to load config:', err);
+                }
+            }
+
+            async function saveConfig() {
+                const config = {
+                    app_version: {
+                        latest: document.getElementById('latestVersion').value,
+                        minimum: document.getElementById('minimumVersion').value,
+                        force_update: document.getElementById('forceUpdate').checked
+                    },
+                    update_dialog: {
+                        enabled: document.getElementById('updateEnabled').checked,
+                        title: document.getElementById('updateTitle').value,
+                        message: document.getElementById('updateMessage').value,
+                        update_url: document.getElementById('updateUrl').value
+                    },
+                    maintenance: {
+                        enabled: document.getElementById('maintenanceEnabled').checked,
+                        message: document.getElementById('maintenanceMessage').value
+                    }
+                };
+
+                try {
+                    const res = await apiPost('/api/admin/config', config);
+                    if (res.ok) {
+                        showToast('Configuration saved successfully!');
+                    } else {
+                        showToast('Failed to save configuration', 'error');
+                    }
+                } catch (err) {
+                    showToast('Error saving configuration', 'error');
+                }
+            }
+
+            async function loadUsers() {
+                try {
+                    const res = await api('/api/admin/users/online');
+                    const data = await res.json();
+                    const userList = document.getElementById('userList');
+
+                    if (data.users.length === 0) {
+                        userList.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No users online</p>';
+                        return;
+                    }
+
+                    userList.innerHTML = data.users.map(user => {
+                        const activityClass = user.current_activity === 'watching' ? 'activity-watching' :
+                                            user.current_activity === 'browsing' ? 'activity-browsing' : 'activity-idle';
+                        return \`
+                            <div class="user-item">
+                                <div class="user-info">
+                                    <strong>\${user.platform || 'Unknown'}</strong> • v\${user.app_version || '?'}
+                                    <div class="user-id">\${user.device_id.substring(0, 20)}...</div>
+                                    \${user.current_video ? '<div style="color: #4CAF50; font-size: 12px;">📺 ' + user.current_video + '</div>' : ''}
+                                </div>
+                                <span class="user-activity \${activityClass}">\${user.current_activity || 'idle'}</span>
+                            </div>
+                        \`;
+                    }).join('');
+                } catch (err) {
+                    console.error('Failed to load users:', err);
+                }
+            }
+
+            // Initial load
+            loadStats();
+            loadConfig();
+            loadUsers();
+
+            // Auto-refresh every 10 seconds
+            setInterval(() => {
+                loadStats();
+                loadUsers();
+            }, 10000);
+        </script>
+    </body>
+    </html>
+    `);
+});
 
 app.get('/', async (req, res) => {
     const videoFiles = await listR2Videos();
