@@ -309,11 +309,81 @@ const saveMetadata = (metadata) => {
 };
 
 
-// --- Thumbnail Generation ---
+// --- Thumbnail Generation with Retry Logic ---
 
 const generatingThumbnails = new Set();
 const MAX_CONCURRENT_THUMBNAILS = 2; // Limit concurrent generations to protect VPS
+const MAX_RETRY_ATTEMPTS = 3; // Number of retry attempts
+const RETRY_DELAY_MS = 2000; // Base delay between retries (exponential backoff)
+const FAILED_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes cooldown for failed thumbnails
 
+// Track failed thumbnail generations with timestamps
+const failedThumbnails = new Map(); // filename -> { attempts: number, lastAttempt: timestamp, error: string }
+
+// Queue for pending thumbnail jobs
+const thumbnailQueue = [];
+let isProcessingQueue = false;
+
+// Helper: delay function
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper: Check if a failed thumbnail can be retried
+const canRetryThumbnail = (filename) => {
+    const failed = failedThumbnails.get(filename);
+    if (!failed) return true;
+
+    // Allow retry if cooldown period has passed
+    if (Date.now() - failed.lastAttempt > FAILED_COOLDOWN_MS) {
+        failedThumbnails.delete(filename);
+        return true;
+    }
+
+    // Don't retry if max attempts reached within cooldown period
+    if (failed.attempts >= MAX_RETRY_ATTEMPTS) {
+        return false;
+    }
+
+    return true;
+};
+
+// Core thumbnail generation with single attempt
+async function generateThumbnailAttempt(videoUrl, outputFilename, attemptNum) {
+    const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
+    const publicPath = `/thumbnails/${outputFilename}`;
+
+    return new Promise((resolve, reject) => {
+        console.log(`[Thumbnail] Attempt ${attemptNum}/${MAX_RETRY_ATTEMPTS} for: ${outputFilename}`);
+
+        const command = ffmpeg(videoUrl)
+            .on('start', (cmd) => {
+                console.log(`[FFmpeg] Started: ${cmd.substring(0, 100)}...`);
+            })
+            .on('end', () => {
+                console.log(`[Thumbnail] Successfully generated: ${outputFilename}`);
+                resolve(publicPath);
+            })
+            .on('error', (err) => {
+                console.error(`[Thumbnail] Attempt ${attemptNum} failed for ${outputFilename}:`, err.message);
+                reject(err);
+            });
+
+        // Use inputOptions for better streaming compatibility
+        command
+            .inputOptions([
+                '-ss 10', // Seek to 10 seconds (faster than percentage)
+                '-t 1'    // Only read 1 second of video
+            ])
+            .outputOptions([
+                '-vframes 1',      // Extract single frame
+                '-q:v 2',          // High quality JPEG
+                '-vf scale=320:180' // Resize to thumbnail size
+            ])
+            .output(outputPath)
+            .run();
+    });
+}
+
+// Main thumbnail generation function with retry logic
 async function generateThumbnail(videoKey, outputFilename) {
     const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
     const publicPath = `/thumbnails/${outputFilename}`;
@@ -323,49 +393,130 @@ async function generateThumbnail(videoKey, outputFilename) {
         return publicPath;
     }
 
+    // Check if in cooldown from previous failures
+    if (!canRetryThumbnail(outputFilename)) {
+        const failed = failedThumbnails.get(outputFilename);
+        console.log(`[Thumbnail] Skipping ${outputFilename} - in cooldown (${failed.attempts} failed attempts)`);
+        return null;
+    }
+
     // Check if already generating
     if (generatingThumbnails.has(outputFilename)) {
-        console.log(`Thumbnail generation already in progress for: ${outputFilename}`);
+        console.log(`[Thumbnail] Already in progress: ${outputFilename}`);
         return null;
     }
 
     // Limit concurrent generations to protect VPS resources
     if (generatingThumbnails.size >= MAX_CONCURRENT_THUMBNAILS) {
-        console.log(`Thumbnail generation queue full, skipping: ${outputFilename}`);
+        // Add to queue instead of skipping
+        if (!thumbnailQueue.some(job => job.outputFilename === outputFilename)) {
+            thumbnailQueue.push({ videoKey, outputFilename });
+            console.log(`[Thumbnail] Queued: ${outputFilename} (queue size: ${thumbnailQueue.length})`);
+        }
         return null;
     }
 
     generatingThumbnails.add(outputFilename);
 
     try {
-        const videoUrl = await getSignedVideoUrl(videoKey, 300); // 5 min expiry
-        if (!videoUrl) return null;
+        const videoUrl = await getSignedVideoUrl(videoKey, 600); // 10 min expiry for retries
+        if (!videoUrl) {
+            console.error(`[Thumbnail] Failed to get signed URL for: ${outputFilename}`);
+            return null;
+        }
 
+        let lastError = null;
+        const existingFailed = failedThumbnails.get(outputFilename);
+        const startAttempt = existingFailed ? existingFailed.attempts + 1 : 1;
 
-        return new Promise((resolve) => {
-            console.log(`Generating thumbnail for: ${outputFilename}`);
-            ffmpeg(videoUrl)
-                .screenshots({
-                    timestamps: ['20%'], // Take shot at 20% mark
-                    filename: outputFilename,
-                    folder: THUMBNAIL_DIR,
-                    size: '320x180' // Standard thumbnail size
-                })
-                .on('end', () => {
-                    console.log(`Thumbnail generated: ${outputFilename}`);
-                    resolve(publicPath);
-                })
-                .on('error', (err) => {
-                    console.error(`Error generating thumbnail for ${outputFilename}:`, err.message);
-                    resolve(null);
+        for (let attempt = startAttempt; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                const result = await generateThumbnailAttempt(videoUrl, outputFilename, attempt);
+
+                // Success! Clear from failed list if it was there
+                failedThumbnails.delete(outputFilename);
+                return result;
+
+            } catch (err) {
+                lastError = err;
+
+                // Update failed tracking
+                failedThumbnails.set(outputFilename, {
+                    attempts: attempt,
+                    lastAttempt: Date.now(),
+                    error: err.message
                 });
-        });
+
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    // Exponential backoff: 2s, 4s, 8s...
+                    const backoffMs = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                    console.log(`[Thumbnail] Retrying in ${backoffMs}ms...`);
+                    await delay(backoffMs);
+                }
+            }
+        }
+
+        console.error(`[Thumbnail] All ${MAX_RETRY_ATTEMPTS} attempts failed for ${outputFilename}:`, lastError?.message);
+        return null;
+
     } catch (error) {
-        console.error(`Error in generateThumbnail wrapper for ${outputFilename}:`, error.message);
+        console.error(`[Thumbnail] Fatal error for ${outputFilename}:`, error.message);
+        failedThumbnails.set(outputFilename, {
+            attempts: MAX_RETRY_ATTEMPTS,
+            lastAttempt: Date.now(),
+            error: error.message
+        });
         return null;
     } finally {
         generatingThumbnails.delete(outputFilename);
+
+        // Process next item in queue
+        processQueue();
     }
+}
+
+// Process thumbnail queue
+async function processQueue() {
+    if (isProcessingQueue || thumbnailQueue.length === 0) return;
+    if (generatingThumbnails.size >= MAX_CONCURRENT_THUMBNAILS) return;
+
+    isProcessingQueue = true;
+
+    while (thumbnailQueue.length > 0 && generatingThumbnails.size < MAX_CONCURRENT_THUMBNAILS) {
+        const job = thumbnailQueue.shift();
+        if (job) {
+            // Don't await - let it run in parallel
+            generateThumbnail(job.videoKey, job.outputFilename).catch(err => {
+                console.error(`[Queue] Error processing ${job.outputFilename}:`, err.message);
+            });
+        }
+        // Small delay between queue processing
+        await delay(100);
+    }
+
+    isProcessingQueue = false;
+}
+
+// Get thumbnail generation status (for admin endpoint)
+function getThumbnailStatus() {
+    return {
+        currently_generating: Array.from(generatingThumbnails),
+        queue_size: thumbnailQueue.length,
+        queued: thumbnailQueue.map(j => j.outputFilename),
+        failed_count: failedThumbnails.size,
+        failed: Object.fromEntries(failedThumbnails)
+    };
+}
+
+// Clear failed thumbnails (for admin endpoint)
+function clearFailedThumbnails(filename = null) {
+    if (filename) {
+        failedThumbnails.delete(filename);
+        return { cleared: filename };
+    }
+    const count = failedThumbnails.size;
+    failedThumbnails.clear();
+    return { cleared_count: count };
 }
 
 // --- Filename Parsing ---
@@ -668,6 +819,63 @@ app.get('/api/admin/activity/log', adminAuth, (req, res) => {
     });
 });
 
+// --- Admin Thumbnail Management Endpoints ---
+
+// Get thumbnail generation status
+app.get('/api/admin/thumbnails/status', adminAuth, (req, res) => {
+    res.json(getThumbnailStatus());
+});
+
+// Clear failed thumbnails (allow retry)
+app.post('/api/admin/thumbnails/clear-failed', adminAuth, (req, res) => {
+    const { filename } = req.body;
+    const result = clearFailedThumbnails(filename);
+    res.json({ success: true, ...result });
+});
+
+// Trigger thumbnail regeneration for all videos without thumbnails
+app.post('/api/admin/thumbnails/regenerate', adminAuth, async (req, res) => {
+    const metadata = loadMetadata();
+    const videoFiles = await listR2Videos();
+
+    let queued = 0;
+    let skipped = 0;
+    let existing = 0;
+
+    for (const file of videoFiles) {
+        const baseFilename = file.filename.replace(/\.[^/.]+$/, "");
+        const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
+        const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
+
+        if (fs.existsSync(pngPath) || fs.existsSync(jpgPath)) {
+            existing++;
+            continue;
+        }
+
+        if (!canRetryThumbnail(`${baseFilename}.png`)) {
+            skipped++;
+            continue;
+        }
+
+        // Queue the thumbnail generation
+        if (!thumbnailQueue.some(job => job.outputFilename === `${baseFilename}.png`)) {
+            thumbnailQueue.push({ videoKey: file.key, outputFilename: `${baseFilename}.png` });
+            queued++;
+        }
+    }
+
+    // Start processing queue
+    processQueue();
+
+    res.json({
+        success: true,
+        total_videos: videoFiles.length,
+        existing_thumbnails: existing,
+        queued_for_generation: queued,
+        skipped_in_cooldown: skipped,
+        current_queue_size: thumbnailQueue.length
+    });
+});
 
 app.get('/', async (req, res) => {
     const videoFiles = await listR2Videos();
