@@ -1122,4 +1122,64 @@ app.listen(PORT, HOST, () => {
     console.log(` R2 Bucket: ${R2_BUCKET_NAME}`);
     console.log(` R2 Endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
     console.log(` Health check: http://${HOST}:${PORT}/health`);
+
+    // Auto-trigger thumbnail generation on startup (after 5 seconds)
+    setTimeout(async () => {
+        console.log('[Thumbnail Auto] Starting automatic thumbnail generation...');
+        await autoGenerateMissingThumbnails();
+    }, 5000);
 });
+
+// --- Automatic Thumbnail Generation ---
+
+const AUTO_THUMBNAIL_INTERVAL_MS = 10 * 60 * 1000; // Check every 10 minutes
+
+async function autoGenerateMissingThumbnails() {
+    try {
+        const videoFiles = await listR2Videos();
+
+        let queued = 0;
+        let existing = 0;
+        let skipped = 0;
+
+        for (const file of videoFiles) {
+            const baseFilename = file.filename.replace(/\.[^/.]+$/, "");
+            const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
+            const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
+
+            // Skip if thumbnail already exists
+            if (fs.existsSync(pngPath) || fs.existsSync(jpgPath)) {
+                existing++;
+                continue;
+            }
+
+            // Skip if in cooldown from failed attempts
+            if (!canRetryThumbnail(`${baseFilename}.png`)) {
+                skipped++;
+                continue;
+            }
+
+            // Add to queue if not already in it
+            if (!thumbnailQueue.some(job => job.outputFilename === `${baseFilename}.png`)) {
+                thumbnailQueue.push({ videoKey: file.key, outputFilename: `${baseFilename}.png` });
+                queued++;
+            }
+        }
+
+        console.log(`[Thumbnail Auto] Videos: ${videoFiles.length}, Existing: ${existing}, Queued: ${queued}, Skipped: ${skipped}`);
+
+        // Start processing the queue
+        if (queued > 0) {
+            processQueue();
+        }
+
+    } catch (error) {
+        console.error('[Thumbnail Auto] Error:', error.message);
+    }
+}
+
+// Run automatic thumbnail check periodically
+setInterval(() => {
+    console.log('[Thumbnail Auto] Periodic check starting...');
+    autoGenerateMissingThumbnails();
+}, AUTO_THUMBNAIL_INTERVAL_MS);
