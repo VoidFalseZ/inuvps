@@ -55,8 +55,8 @@ const apiLimiter = rateLimit({
     message: { error: 'Too many requests, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
-    // Disable trust proxy to avoid X-Forwarded-For errors
-    skip: () => false,
+    validate: { xForwardedForHeader: false },  // <-- ADD THIS LINE
+    skip(req, res) { return false; }
 });
 app.use('/api/', apiLimiter);
 app.use('/thumbnails', express.static(path.join(process.cwd(), "cache", "thumbnails")));
