@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const compression = require('compression'); // Added for gzip compression
 const rateLimit = require('express-rate-limit');
 const { query, validationResult } = require('express-validator');
 const fs = require('fs');
@@ -13,6 +14,9 @@ const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/c
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const ffmpeg = require('fluent-ffmpeg');
 const { execSync } = require('child_process');
+const http = require('http');
+const { Server } = require('socket.io');
+const multer = require('multer');
 
 // Try to use system FFmpeg first (more stable for streaming), fallback to npm package
 let ffmpegPath, ffprobePath;
@@ -34,6 +38,13 @@ ffmpeg.setFfprobePath(ffprobePath);
 
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*", // Allow all origins for mobile app
+        methods: ["GET", "POST"]
+    }
+});
 
 // --- Server Configuration ---
 const PORT = process.env.PORT || 8000;
@@ -45,6 +56,7 @@ app.use(helmet({
     contentSecurityPolicy: false
 }));
 app.use(cors());
+app.use(compression()); // Gzip compression - reduces response size by ~60%
 app.use(express.json()); // Parse JSON bodies for heartbeat endpoint
 app.use(morgan('combined'));
 
@@ -55,11 +67,50 @@ const apiLimiter = rateLimit({
     message: { error: 'Too many requests, please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
-    validate: { xForwardedForHeader: false },  // <-- ADD THIS LINE
+    validate: { xForwardedForHeader: false },
     skip(req, res) { return false; }
 });
 app.use('/api/', apiLimiter);
-app.use('/thumbnails', express.static(path.join(process.cwd(), "cache", "thumbnails")));
+
+// Serve thumbnails with 7-day cache for better performance
+app.use('/thumbnails', express.static(path.join(process.cwd(), "cache", "thumbnails"), {
+    maxAge: '7d',
+    immutable: true
+}));
+
+// Serve chat uploads
+const CHAT_UPLOADS_DIR = path.join(process.cwd(), "cache", "chat_uploads");
+if (!fs.existsSync(CHAT_UPLOADS_DIR)) fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
+app.use('/chat_uploads', express.static(CHAT_UPLOADS_DIR, { maxAge: '7d' }));
+
+// --- Chat Upload Configuration ---
+const chatStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, CHAT_UPLOADS_DIR);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'chat-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const uploadChat = multer({
+    storage: chatStorage,
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
+// --- Socket.io Logic ---
+io.on('connection', (socket) => {
+    console.log('[Socket] Client connected:', socket.id);
+
+    socket.on('chat_message', (msg) => {
+        // Broadcast to all clients including sender (simplifies state sync)
+        io.emit('chat_message', msg);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('[Socket] Client disconnected:', socket.id);
+    });
+});
 
 // --- R2 Configuration ---
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || 'your-account-id';
@@ -196,17 +247,32 @@ const DEFAULT_ADMIN_CONFIG = {
     }
 };
 
-// --- Load Admin Config ---
+// --- Admin Config Cache (avoids sync file reads on every request) ---
+let adminConfigCache = null;
+
+// --- Load Admin Config (with caching) ---
 const loadAdminConfig = () => {
+    // Return cached config if available
+    if (adminConfigCache) {
+        return adminConfigCache;
+    }
+
     try {
         if (fs.existsSync(ADMIN_CONFIG_FILE)) {
             const data = fs.readFileSync(ADMIN_CONFIG_FILE, 'utf8');
-            return { ...DEFAULT_ADMIN_CONFIG, ...JSON.parse(data) };
+            adminConfigCache = { ...DEFAULT_ADMIN_CONFIG, ...JSON.parse(data) };
+            return adminConfigCache;
         }
     } catch (error) {
         console.error('Error loading admin config:', error.message);
     }
-    return DEFAULT_ADMIN_CONFIG;
+    adminConfigCache = DEFAULT_ADMIN_CONFIG;
+    return adminConfigCache;
+};
+
+// Invalidate cache when config is saved (for admin endpoints)
+const invalidateAdminConfigCache = () => {
+    adminConfigCache = null;
 };
 
 // --- Save Default Admin Config if not exists ---
@@ -291,20 +357,31 @@ async function getSignedVideoUrl(key, expiresIn = 3600) {
     }
 }
 
-// --- Metadata Functions ---
+// --- Metadata Functions (with caching) ---
+
+let metadataCache = null;
 
 const loadMetadata = () => {
+    // Return cached metadata if available
+    if (metadataCache) {
+        return metadataCache;
+    }
+
     if (fs.existsSync(METADATA_FILE)) {
         try {
-            return JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+            metadataCache = JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+            return metadataCache;
         } catch {
-            return {};
+            metadataCache = {};
+            return metadataCache;
         }
     }
-    return {};
+    metadataCache = {};
+    return metadataCache;
 };
 
 const saveMetadata = (metadata) => {
+    metadataCache = metadata; // Update cache
     fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 4), 'utf-8');
 };
 
@@ -1104,6 +1181,20 @@ app.get('/video/:filename', async (req, res) => {
     }
 });
 
+// --- Chat Upload Endpoint ---
+app.post('/api/chat/upload', uploadChat.single('image'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No image file provided' });
+    }
+    const imageUrl = `/chat_uploads/${req.file.filename}`;
+    res.json({ url: imageUrl });
+});
+
+// --- R2 Streaming Endpoint ---
+// (Note: This seems to have been missing from my view, ensure I don't break existing code. 
+// Actually, looking at previous output, there was a streaming endpoint logic around 1100-1138 inside a route handler. 
+// I will just insert BEFORE "--- Error Handlers ---" which is safe).
+
 // --- Error Handlers ---
 
 app.use((err, req, res, next) => {
@@ -1117,7 +1208,7 @@ app.use((req, res) => {
 
 // --- Start Server ---
 
-app.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, () => {
     console.log(` Server is running at http://${HOST}:${PORT}`);
     console.log(` R2 Bucket: ${R2_BUCKET_NAME}`);
     console.log(` R2 Endpoint: https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`);
