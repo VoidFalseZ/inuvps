@@ -447,7 +447,7 @@ async function generateThumbnailAttempt(videoUrl, outputFilename, attemptNum) {
         // Use inputOptions for better streaming compatibility
         command
             .inputOptions([
-                '-ss 10', // Seek to 10 seconds (faster than percentage)
+                '-ss 30', // Seek to 30 seconds (skips most intros/black screens)
                 '-t 1'    // Only read 1 second of video
             ])
             .outputOptions([
