@@ -98,12 +98,58 @@ const uploadChat = multer({
     limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
-// --- Socket.io Logic ---
+// --- Persistent Chat History ---
+const CHAT_HISTORY_FILE = path.join(process.cwd(), "cache", "chat_history.json");
+let chatHistory = [];
+
+// Load history on startup
+try {
+    if (fs.existsSync(CHAT_HISTORY_FILE)) {
+        chatHistory = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, 'utf8'));
+        // Prune messages older than 24 hours on load
+        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+        chatHistory = chatHistory.filter(msg => new Date(msg.timestamp).getTime() > oneDayAgo);
+        console.log(`[Chat] Loaded ${chatHistory.length} messages from history`);
+    }
+} catch (error) {
+    console.error('[Chat] Error loading history:', error.message);
+}
+
+const saveChatHistory = () => {
+    try {
+        // Ensure cache dir exists
+        const cacheDir = path.dirname(CHAT_HISTORY_FILE);
+        if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+        fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify(chatHistory, null, 2));
+    } catch (error) {
+        console.error('[Chat] Error saving history:', error.message);
+    }
+};
+
 io.on('connection', (socket) => {
     console.log('[Socket] Client connected:', socket.id);
 
+    // Send existing history to the connected client
+    socket.emit('chat_history', chatHistory);
+
     socket.on('chat_message', (msg) => {
-        // Broadcast to all clients including sender (simplifies state sync)
+        // Ensure timestamp
+        if (!msg.timestamp) msg.timestamp = new Date().toISOString();
+
+        // Add to history
+        chatHistory.push(msg);
+
+        // Prune messages older than 24 hours
+        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+        if (chatHistory.length > 0 && new Date(chatHistory[0].timestamp).getTime() < oneDayAgo) {
+            chatHistory = chatHistory.filter(m => new Date(m.timestamp).getTime() > oneDayAgo);
+        }
+
+        // Save to compatibility
+        saveChatHistory();
+
+        // Broadcast to all clients (including sender to confirm receipt)
         io.emit('chat_message', msg);
     });
 
@@ -111,6 +157,16 @@ io.on('connection', (socket) => {
         console.log('[Socket] Client disconnected:', socket.id);
     });
 });
+
+// Periodic cleanup (every hour)
+setInterval(() => {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    if (chatHistory.some(m => new Date(m.timestamp).getTime() < oneDayAgo)) {
+        chatHistory = chatHistory.filter(m => new Date(m.timestamp).getTime() > oneDayAgo);
+        saveChatHistory();
+        console.log('[Chat] Pruned old messages');
+    }
+}, 60 * 60 * 1000);
 
 // --- R2 Configuration ---
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || 'your-account-id';
