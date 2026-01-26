@@ -689,6 +689,16 @@ const getVideoDetails = async (videoFile, metadata) => {
     let { display_title, episode_number, series_title, description } = fileMetadata;
     description = description || "No description available.";
 
+    // Override series_title if in [3D] folder (for sorting purposes)
+    // This allows files in "[3D]/" folder to automatically go to 3D Hentai section
+    if (key && (key.startsWith('[3D]/') || key.includes('/[3D]/'))) {
+        if (series_title && !series_title.toLowerCase().includes('3d')) {
+            // Create a temporary series title for the response without modifying cache permanently (optional)
+            // Or update it if it's missing. Here we just ensure the runtime object has "3D"
+            series_title = `${series_title} [3D]`;
+        }
+    }
+
     let metadataUpdated = false;
     if (!display_title || !series_title) {
         const extracted = extractTitleAndEpisode(filename);
