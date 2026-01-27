@@ -56,7 +56,20 @@ app.use(helmet({
     contentSecurityPolicy: false
 }));
 app.use(cors());
-app.use(compression()); // Gzip compression - reduces response size by ~60%
+app.get('/health', (req, res) => {
+    // ...
+});
+
+const shouldCompress = (req, res) => {
+    if (req.headers['x-no-compression']) {
+        // don't compress responses with this request header
+        return false;
+    }
+    // fallback to standard filter function
+    return compression.filter(req, res);
+};
+
+app.use(compression({ filter: shouldCompress })); // Gzip compression - reduces response size by ~60%
 app.use(express.json()); // Parse JSON bodies for heartbeat endpoint
 app.use(morgan('combined'));
 
@@ -1213,6 +1226,9 @@ app.get('/video/:filename', async (req, res) => {
         const response = await s3Client.send(command);
         const contentLength = response.ContentLength;
         const range = req.headers.range;
+
+        // Disable compression for video streaming
+        req.headers['x-no-compression'] = '1';
 
         if (range) {
             const parts = range.replace(/bytes=/, "").split("-");
