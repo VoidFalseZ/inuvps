@@ -61,8 +61,8 @@ app.get('/health', (req, res) => {
 });
 
 const shouldCompress = (req, res) => {
-    if (req.headers['x-no-compression']) {
-        // don't compress responses with this request header
+    if (req.headers['x-no-compression'] || req.path.includes('/video/')) {
+        // don't compress responses with this request header or video path
         return false;
     }
     // fallback to standard filter function
