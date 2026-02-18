@@ -215,7 +215,7 @@ function clearFailed(filename = null) {
 }
 
 /**
- * Check if thumbnail exists for a filename, with mtime cache-busting
+ * Check if thumbnail exists for a filename (with cache-busting via mtime)
  */
 function exists(filename) {
     const baseFilename = getBaseFilename(filename);
@@ -224,95 +224,107 @@ function exists(filename) {
 
     if (fs.existsSync(pngPath)) {
         const stats = fs.statSync(pngPath);
-        return `/thumbnails/${baseFilename}.png?v=${Math.floor(stats.mtimeMs)}`;
+        const mtime = Math.floor(stats.mtimeMs);
+        return `/thumbnails/${baseFilename}.png?v=${mtime}`;
     }
     if (fs.existsSync(jpgPath)) {
         const stats = fs.statSync(jpgPath);
-        return `/thumbnails/${baseFilename}.jpg?v=${Math.floor(stats.mtimeMs)}`;
+        const mtime = Math.floor(stats.mtimeMs);
+        return `/thumbnails/${baseFilename}.jpg?v=${mtime}`;
     }
     return null;
 }
 
 /**
- * Regenerate thumbnail at a specific timestamp (for admin use)
- * @param {string} videoKey - R2 video key
- * @param {string} outputFilename - Output filename (e.g. 'video.png')
- * @param {number} timestamp - Timestamp in seconds
- * @returns {Promise<string|null>} Public URL with cache-busting or null on failure
+ * Delete existing thumbnail for a video
+ * @param {string} filename
+ * @returns {{ deleted: boolean, path: string|null }}
  */
-async function regenerateThumbnailAt(videoKey, outputFilename, timestamp) {
+function deleteThumbnail(filename) {
+    const baseFilename = getBaseFilename(filename);
+    const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
+    const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
+
+    console.log(`[Thumbnail] Delete request - Original: "${filename}", Base: "${baseFilename}"`);
+    console.log(`[Thumbnail] PNG exists: ${fs.existsSync(pngPath)}, JPG exists: ${fs.existsSync(jpgPath)}`);
+
+    if (fs.existsSync(pngPath)) {
+        fs.unlinkSync(pngPath);
+        console.log(`[Thumbnail] Deleted: ${baseFilename}.png`);
+        return { deleted: true, path: pngPath };
+    }
+    if (fs.existsSync(jpgPath)) {
+        fs.unlinkSync(jpgPath);
+        console.log(`[Thumbnail] Deleted: ${baseFilename}.jpg`);
+        return { deleted: true, path: jpgPath };
+    }
+    console.log(`[Thumbnail] No thumbnail found to delete for ${baseFilename}`);
+    return { deleted: false, path: null };
+}
+
+/**
+ * Save a custom uploaded thumbnail
+ * @param {string} filename - Video filename
+ * @param {Buffer} buffer - Image buffer
+ * @param {string} mimeType - Image mime type
+ * @returns {string} Public path to saved thumbnail
+ */
+function saveCustomThumbnail(filename, buffer, mimeType) {
+    const baseFilename = getBaseFilename(filename);
+    const ext = mimeType && mimeType.includes('png') ? 'png' : 'jpg';
+    // Delete any existing thumbnail first
+    deleteThumbnail(filename);
+    const outputPath = path.join(THUMBNAIL_DIR, `${baseFilename}.${ext}`);
+    fs.writeFileSync(outputPath, buffer);
+    console.log(`[Thumbnail] Custom thumbnail saved: ${baseFilename}.${ext}`);
+    const stats = fs.statSync(outputPath);
+    return `/thumbnails/${baseFilename}.${ext}?v=${Math.floor(stats.mtimeMs)}`;
+}
+
+/**
+ * Generate thumbnail at a specific timestamp
+ * @param {string} videoKey - R2 video key
+ * @param {string} filename - Video filename
+ * @param {number} timestampSeconds
+ * @returns {Promise<string|null>}
+ */
+async function generateAtTimestamp(videoKey, filename, timestampSeconds) {
+    const baseFilename = getBaseFilename(filename);
+    const outputFilename = `${baseFilename}.png`;
     const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
+
+    // Delete existing thumbnail first
+    deleteThumbnail(filename);
 
     try {
         const videoUrl = await r2Service.getSignedVideoUrl(videoKey, 600);
         if (!videoUrl) {
-            console.error(`[Thumbnail] Failed to get signed URL for regeneration: ${outputFilename}`);
+            console.error(`[Thumbnail] Failed to get signed URL for: ${filename}`);
             return null;
         }
 
-        await new Promise((resolve, reject) => {
-            console.log(`[Thumbnail] Regenerating at ${timestamp}s: ${outputFilename}`);
+        return new Promise((resolve, reject) => {
+            console.log(`[Thumbnail] Generating at ${timestampSeconds}s for: ${outputFilename}`);
+
             ffmpeg(videoUrl)
-                .inputOptions([`-ss ${timestamp}`, '-t 1'])
-                .outputOptions(['-vframes 1', '-q:v 2', '-vf scale=320:180', '-y'])
-                .output(outputPath)
                 .on('end', () => {
-                    console.log(`[Thumbnail] Regenerated: ${outputFilename}`);
-                    resolve();
+                    console.log(`[Thumbnail] Generated at ${timestampSeconds}s: ${outputFilename}`);
+                    const stats = fs.statSync(outputPath);
+                    resolve(`/thumbnails/${outputFilename}?v=${Math.floor(stats.mtimeMs)}`);
                 })
                 .on('error', (err) => {
-                    console.error(`[Thumbnail] Regeneration failed: ${err.message}`);
+                    console.error(`[Thumbnail] Failed at ${timestampSeconds}s for ${outputFilename}:`, err.message);
                     reject(err);
                 })
+                .inputOptions([`-ss ${timestampSeconds}`, '-t 1'])
+                .outputOptions(['-vframes 1', '-q:v 2', '-vf scale=320:180'])
+                .output(outputPath)
                 .run();
         });
-
-        // Get updated mtime for cache busting
-        const stats = fs.statSync(outputPath);
-        return `/thumbnails/${outputFilename}?v=${Math.floor(stats.mtimeMs)}`;
     } catch (error) {
-        console.error(`[Thumbnail] regenerateThumbnailAt error:`, error.message);
+        console.error(`[Thumbnail] Error generating at timestamp for ${filename}:`, error.message);
         return null;
     }
-}
-
-/**
- * List all existing thumbnails with their mtime-busted URLs
- * @returns {Array} Array of { filename, url }
- */
-function listThumbnails() {
-    try {
-        const files = fs.readdirSync(THUMBNAIL_DIR);
-        return files
-            .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
-            .map(f => {
-                const filePath = path.join(THUMBNAIL_DIR, f);
-                const stats = fs.statSync(filePath);
-                return {
-                    filename: f,
-                    url: `/thumbnails/${f}?v=${Math.floor(stats.mtimeMs)}`,
-                    mtime: stats.mtimeMs
-                };
-            })
-            .sort((a, b) => b.mtime - a.mtime);
-    } catch (error) {
-        console.error('[Thumbnail] listThumbnails error:', error.message);
-        return [];
-    }
-}
-
-/**
- * Delete a thumbnail file
- * @param {string} filename - Thumbnail filename (e.g. 'video.png')
- * @returns {boolean}
- */
-function deleteThumbnail(filename) {
-    const filePath = path.join(THUMBNAIL_DIR, filename);
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        return true;
-    }
-    return false;
 }
 
 /**
@@ -366,10 +378,10 @@ module.exports = {
     getStatus,
     clearFailed,
     exists,
+    deleteThumbnail,
+    saveCustomThumbnail,
+    generateAtTimestamp,
     autoGenerateMissing,
     canRetryThumbnail,
-    regenerateThumbnailAt,
-    listThumbnails,
-    deleteThumbnail,
     THUMBNAIL_DIR
 };

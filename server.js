@@ -73,21 +73,10 @@ app.use('/api/', apiLimiter);
 
 // --- Static Files ---
 app.use('/thumbnails', express.static(path.join(process.cwd(), 'cache', 'thumbnails'), {
-    maxAge: '1d',
-    // NOTE: No 'immutable' here - we use ?v=mtime for cache busting
-    etag: true,
-    lastModified: true
+    maxAge: '7d',
+    immutable: true
 }));
 app.use('/chat_uploads', express.static(chatService.CHAT_UPLOADS_DIR, { maxAge: '7d' }));
-app.use('/admin', express.static(path.join(process.cwd(), 'public', 'admin')));
-
-// --- Admin Dashboard Redirect (only for .html page requests) ---
-// e.g. /api/admin/chat.html -> /admin/chat.html
-app.get('/api/admin', (req, res) => res.redirect('/admin'));
-app.get('/api/admin/*.html', (req, res) => {
-    const page = req.params[0];
-    res.redirect(`/admin/${page}.html`);
-});
 
 // --- Mount All Routes ---
 mountRoutes(app);

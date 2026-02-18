@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thumbnail Manager – InuPoi</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 1px solid #2a2a4a;
+            padding: 16px 24px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            color: #a78bfa;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .stat-value {
+            color: #a78bfa;
+            font-weight: bold;
+        }
+
+        .controls {
+            padding: 16px 24px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            background: #141414;
+            border-bottom: 1px solid #222;
+        }
+
+        .search-box {
+            flex: 1;
+            padding: 10px 16px;
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: #a78bfa;
+        }
+
+        .btn-refresh {
+            padding: 10px 20px;
+            background: #a78bfa;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .btn-refresh:hover {
+            background: #9061f9;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px;
+            padding: 20px 24px;
+        }
+
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: #444;
+        }
+
+        .thumb-wrap {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%;
+            background: #111;
+        }
+
+        .thumb-wrap img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .thumb-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            color: #444;
+        }
+
+        .thumb-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .badge-has {
+            background: rgba(16, 185, 129, 0.85);
+            color: #fff;
+        }
+
+        .badge-no {
+            background: rgba(239, 68, 68, 0.85);
+            color: #fff;
+        }
+
+        .card-body {
+            padding: 12px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e0e0e0;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-sub {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 7px 4px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover {
+            opacity: 0.85;
+        }
+
+        .btn-upload {
+            background: #3b82f6;
+            color: #fff;
+        }
+
+        .btn-regen {
+            background: #10b981;
+            color: #fff;
+        }
+
+        .btn-delete {
+            background: #ef4444;
+            color: #fff;
+            min-width: 32px;
+            flex: 0;
+            padding: 7px 10px;
+        }
+
+        /* Modals */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 16px;
+            padding: 28px;
+            width: 90%;
+            max-width: 420px;
+        }
+
+        .modal h3 {
+            color: #a78bfa;
+            margin-bottom: 8px;
+        }
+
+        .modal p {
+            color: #aaa;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            margin-bottom: 16px;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: #a78bfa;
+        }
+
+        .drop-zone-text {
+            color: #888;
+            font-size: 14px;
+        }
+
+        .drop-zone-text span {
+            color: #a78bfa;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .preview-img {
+            max-width: 100%;
+            max-height: 160px;
+            border-radius: 8px;
+            display: none;
+            margin: 10px auto 0;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-cancel {
+            flex: 1;
+            padding: 10px;
+            background: #333;
+            color: #e0e0e0;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-submit {
+            flex: 1;
+            padding: 10px;
+            background: #a78bfa;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            opacity: 0.5;
+        }
+
+        .btn-submit.ready {
+            opacity: 1;
+        }
+
+        .regen-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .regen-input:focus {
+            outline: none;
+            border-color: #a78bfa;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 999;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        .toast.show {
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: #10b981;
+            color: #fff;
+        }
+
+        .toast.error {
+            background: #ef4444;
+            color: #fff;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 300;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: #a78bfa;
+        }
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🖼️ Thumbnail Manager</h1>
+        <div class="header-stats">
+            <span>Total: <span class="stat-value" id="statTotal">-</span></span>
+            <span>With Thumbnail: <span class="stat-value" id="statHas">-</span></span>
+            <span>Missing: <span class="stat-value" id="statMissing">-</span></span>
+        </div>
+    </div>
+
+    <div class="controls">
+        <input type="text" class="search-box" id="searchInput" placeholder="🔍 Search videos..."
+            oninput="filterVideos()">
+        <button class="btn-refresh" onclick="loadVideos()">↻ Refresh</button>
+    </div>
+
+    <div class="grid" id="videoGrid"></div>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay" id="uploadModal">
+        <div class="modal">
+            <h3>Upload Custom Thumbnail</h3>
+            <p id="uploadFilename">For: video.mp4</p>
+            <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                <div class="drop-zone-text">Drop an image here or <span>click to browse</span></div>
+                <img class="preview-img" id="previewImg">
+            </div>
+            <input type="file" id="fileInput" accept="image/*" onchange="handleFileSelect(this.files[0])">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeUploadModal()">Cancel</button>
+                <button class="btn-submit" id="btnUploadSubmit" onclick="submitUpload()">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Regen Modal -->
+    <div class="modal-overlay" id="regenModal">
+        <div class="modal">
+            <h3>Regenerate Thumbnail</h3>
+            <p id="regenFilename">For: video.mp4</p>
+            <input type="number" class="regen-input" id="regenTimestamp" placeholder="Timestamp in seconds (e.g. 90)"
+                min="0">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeRegenModal()">Cancel</button>
+                <button class="btn-submit ready" onclick="submitRegen()">Regenerate</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="loading-overlay" id="loadingOverlay">⏳ Processing...</div>
+
+    <script>
+        const API_KEY = new URLSearchParams(location.search).get('api_key') || '';
+        const BASE_URL = location.origin;
+
+        let allVideos = [];
+        let uploadTarget = null;
+        let uploadFile = null;
+        let regenTarget = null;
+
+        function apiUrl(path) {
+            return BASE_URL + path + '?api_key=' + API_KEY;
+        }
+
+        function showToast(msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'toast show ' + type;
+            setTimeout(() => t.className = 'toast', 3000);
+        }
+
+        function showLoading() { document.getElementById('loadingOverlay').classList.add('active'); }
+        function hideLoading() { document.getElementById('loadingOverlay').classList.remove('active'); }
+
+        async function loadVideos() {
+            showLoading();
+            try {
+                const res = await fetch(apiUrl('/api/videos'));
+                const data = await res.json();
+                allVideos = (data.videos || []).map(v => ({
+                    filename: v.filename,
+                    series_title: v.series_title || '',
+                    thumbnail_url: v.thumbnail_url || null,
+                    key: v.key || ''
+                }));
+                updateStats();
+                renderGrid(allVideos);
+            } catch (e) {
+                showToast('Failed to load videos: ' + e.message, 'error');
+            }
+            hideLoading();
+        }
+
+        function updateStats() {
+            const total = allVideos.length;
+            const has = allVideos.filter(v => !!v.thumbnail_url).length;
+            document.getElementById('statTotal').textContent = total;
+            document.getElementById('statHas').textContent = has;
+            document.getElementById('statMissing').textContent = total - has;
+        }
+
+        function filterVideos() {
+            const q = document.getElementById('searchInput').value.toLowerCase();
+            renderGrid(allVideos.filter(v =>
+                v.filename.toLowerCase().includes(q) || (v.series_title || '').toLowerCase().includes(q)
+            ));
+        }
+
+        function getThumbUrl(thumbnailUrl) {
+            if (!thumbnailUrl) return null;
+            if (thumbnailUrl.startsWith('http')) return thumbnailUrl;
+            // Cache-bust for browser
+            const base = thumbnailUrl.split('?')[0];
+            return BASE_URL + base + '?t=' + Date.now();
+        }
+
+        function escapeAttr(str) {
+            return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function renderGrid(videos) {
+            const grid = document.getElementById('videoGrid');
+            if (!videos.length) {
+                grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#666;padding:60px">No videos found.</div>';
+                return;
+            }
+            grid.innerHTML = videos.map(v => {
+                const thumbUrl = getThumbUrl(v.thumbnail_url);
+                const hasBadge = v.thumbnail_url
+                    ? '<span class="thumb-badge badge-has">✓ Has Thumbnail</span>'
+                    : '<span class="thumb-badge badge-no">✗ No Thumbnail</span>';
+                const thumbContent = thumbUrl
+                    ? `<img src="${escapeAttr(thumbUrl)}" alt="thumbnail" onerror="this.style.display='none'">`
+                    : '<div class="thumb-placeholder">🖼️</div>';
+
+                return `
+                <div class="card">
+                    <div class="thumb-wrap">
+                        ${thumbContent}
+                        ${hasBadge}
+                    </div>
+                    <div class="card-body">
+                        <div class="card-title" title="${escapeAttr(v.filename)}">${escapeAttr(v.filename)}</div>
+                        <div class="card-sub">${escapeAttr(v.series_title || '')}</div>
+                        <div class="card-actions">
+                            <button class="btn btn-upload" onclick="openUploadModal('${escapeAttr(v.filename)}')">📤 Upload</button>
+                            <button class="btn btn-regen" onclick="openRegenModal('${escapeAttr(v.filename)}')">🔄 Regen at</button>
+                            <button class="btn btn-delete" onclick="deleteThumbnail('${escapeAttr(v.filename)}')">🗑️</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ── Upload Modal ──────────────────────────────────────────────────────
+        function openUploadModal(filename) {
+            uploadTarget = filename;
+            uploadFile = null;
+            document.getElementById('uploadFilename').textContent = 'For: ' + filename;
+            document.getElementById('previewImg').style.display = 'none';
+            document.getElementById('btnUploadSubmit').classList.remove('ready');
+            document.getElementById('fileInput').value = '';
+            document.getElementById('uploadModal').classList.add('active');
+        }
+
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.remove('active');
+            uploadTarget = null;
+            uploadFile = null;
+        }
+
+        function handleFileSelect(file) {
+            if (!file) return;
+            uploadFile = file;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = document.getElementById('previewImg');
+                img.src = e.target.result;
+                img.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+            document.getElementById('btnUploadSubmit').classList.add('ready');
+        }
+
+        // Drag and drop
+        const dropZone = document.getElementById('dropZone');
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) handleFileSelect(file);
+        });
+
+        async function submitUpload() {
+            if (!uploadFile || !uploadTarget) return;
+            showLoading();
+
+            // IMPORTANT: Create FormData BEFORE closing modal (closing sets vars to null)
+            var formData = new FormData();
+            formData.append('filename', uploadTarget);
+            formData.append('thumbnail', uploadFile);
+
+            closeUploadModal();
+
+            try {
+                var res = await fetch(apiUrl('/api/admin/thumbnails/upload'), {
+                    method: 'POST',
+                    body: formData
+                });
+                var data = await res.json();
+                if (data.success) {
+                    showToast('Thumbnail uploaded successfully!');
+                    await loadVideos();
+                } else {
+                    showToast(data.error || 'Upload failed', 'error');
+                }
+            } catch (e) {
+                showToast('Upload failed: ' + e.message, 'error');
+            }
+            hideLoading();
+        }
+
+        // ── Regen Modal ───────────────────────────────────────────────────────
+        function openRegenModal(filename) {
+            regenTarget = filename;
+            document.getElementById('regenFilename').textContent = 'For: ' + filename;
+            document.getElementById('regenTimestamp').value = '90';
+            document.getElementById('regenModal').classList.add('active');
+        }
+
+        function closeRegenModal() {
+            document.getElementById('regenModal').classList.remove('active');
+            regenTarget = null;
+        }
+
+        async function submitRegen() {
+            if (!regenTarget) return;
+            const ts = parseInt(document.getElementById('regenTimestamp').value, 10);
+            if (isNaN(ts) || ts < 0) { showToast('Enter a valid timestamp', 'error'); return; }
+
+            const filename = regenTarget;
+            closeRegenModal();
+            showLoading();
+
+            try {
+                const res = await fetch(apiUrl('/api/admin/thumbnails/regenerate-at'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, timestamp_seconds: ts })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Thumbnail regenerated at ' + ts + 's!');
+                    await loadVideos();
+                } else {
+                    showToast(data.error || 'Regeneration failed', 'error');
+                }
+            } catch (e) {
+                showToast('Regeneration failed: ' + e.message, 'error');
+            }
+            hideLoading();
+        }
+
+        // ── Delete ────────────────────────────────────────────────────────────
+        async function deleteThumbnail(filename) {
+            if (!confirm('Delete thumbnail for:\n' + filename + '?')) return;
+            showLoading();
+            try {
+                const res = await fetch(apiUrl('/api/admin/thumbnails/delete'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Thumbnail deleted!');
+                    await loadVideos();
+                } else {
+                    showToast(data.error || 'Delete failed', 'error');
+                }
+            } catch (e) {
+                showToast('Delete failed: ' + e.message, 'error');
+            }
+            hideLoading();
+        }
+
+        // Init
+        loadVideos();
+    </script>
+</body>
+
+</html>

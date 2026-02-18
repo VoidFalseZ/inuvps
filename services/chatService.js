@@ -15,9 +15,6 @@ if (!fs.existsSync(CHAT_UPLOADS_DIR)) fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive
 // In-memory chat history
 let chatHistory = [];
 
-// Socket.io instance (set during init)
-let _io = null;
-
 /**
  * Load chat history from file
  */
@@ -68,33 +65,6 @@ function addMessage(msg) {
 }
 
 /**
- * Delete a message by ID
- * @param {string} id - Message ID
- * @returns {boolean} True if deleted, false if not found
- */
-function deleteMessage(id) {
-    const initialLength = chatHistory.length;
-    chatHistory = chatHistory.filter(m => m.id !== id);
-    if (chatHistory.length < initialLength) {
-        saveHistory();
-        // Broadcast deletion to all connected clients
-        if (_io) {
-            _io.emit('chat_delete', { id });
-        }
-        return true;
-    }
-    return false;
-}
-
-/**
- * Get the socket.io instance
- * @returns {Server|null}
- */
-function getIo() {
-    return _io;
-}
-
-/**
  * Get current chat history
  * @returns {Array} Chat messages
  */
@@ -118,12 +88,44 @@ function pruneOldMessages() {
     return false;
 }
 
+// Store io instance for admin access
+let ioInstance = null;
+
+/**
+ * Delete a message by ID
+ * @param {string} messageId
+ * @returns {boolean} Whether message was found and deleted
+ */
+function deleteMessage(messageId) {
+    const before = chatHistory.length;
+    chatHistory = chatHistory.filter(m => m.id !== messageId);
+    const deleted = chatHistory.length < before;
+    if (deleted) {
+        saveHistory();
+        if (ioInstance) {
+            ioInstance.emit('chat_delete', { id: messageId });
+        }
+        console.log('[Chat] Deleted message:', messageId);
+    }
+    return deleted;
+}
+
+/**
+ * Broadcast a message to all connected clients
+ * @param {Object} message
+ */
+function broadcastMessage(message) {
+    if (ioInstance) {
+        ioInstance.emit('chat_message', message);
+    }
+}
+
 /**
  * Initialize Socket.io handlers for chat
  * @param {Server} io - Socket.io server instance
  */
 function initSocketHandlers(io) {
-    _io = io; // Store io instance for admin broadcasts
+    ioInstance = io;
 
     io.on('connection', (socket) => {
         console.log('[Socket] Client connected:', socket.id);
@@ -150,10 +152,10 @@ module.exports = {
     loadHistory,
     saveHistory,
     addMessage,
-    deleteMessage,
     getHistory,
+    deleteMessage,
+    broadcastMessage,
     pruneOldMessages,
     initSocketHandlers,
-    getIo,
     CHAT_UPLOADS_DIR
 };

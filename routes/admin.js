@@ -2,18 +2,30 @@
 
 const express = require('express');
 const router = express.Router();
-const path = require('path');
 const multer = require('multer');
-const fs = require('fs');
+const path = require('path');
 const { adminAuth } = require('../middleware/auth');
 const sessionService = require('../services/sessionService');
 const thumbnailService = require('../services/thumbnailService');
 const chatService = require('../services/chatService');
-const r2Service = require('../services/r2Service');
+const videoService = require('../services/videoService');
 const { getBaseFilename } = require('../utils/fileParser');
+const r2Service = require('../services/r2Service');
+
+// Multer for thumbnail uploads (memory storage)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new Error('Only image files are allowed'));
+    }
+});
 
 // Apply admin auth to all routes in this router
 router.use(adminAuth);
+
+// ─── USER / SESSION ROUTES ────────────────────────────────────────────────────
 
 // Get online users list
 router.get('/users/online', (req, res) => {
@@ -32,9 +44,128 @@ router.get('/activity/log', (req, res) => {
     res.json(sessionService.getActivityLog(limit, eventFilter));
 });
 
+// ─── THUMBNAIL ROUTES ─────────────────────────────────────────────────────────
+
 // Get thumbnail generation status
 router.get('/thumbnails/status', (req, res) => {
     res.json(thumbnailService.getStatus());
+});
+
+// Serve thumbnail manager HTML page
+router.get('/thumbnails/manager', (req, res) => {
+    res.sendFile(path.join(process.cwd(), 'public', 'admin', 'thumbnail-manager.html'));
+});
+
+// Upload a custom thumbnail image
+router.post('/thumbnails/upload', upload.single('thumbnail'), (req, res) => {
+    try {
+        console.log('[Admin] Upload request - body:', req.body);
+        console.log('[Admin] Upload request - file:', req.file ? 'present' : 'missing');
+
+        const { filename } = req.body;
+
+        if (!filename) {
+            console.error('[Admin] Upload failed: filename missing');
+            return res.status(400).json({ success: false, error: 'filename is required' });
+        }
+        if (!req.file) {
+            console.error('[Admin] Upload failed: file missing');
+            return res.status(400).json({ success: false, error: 'thumbnail image file is required' });
+        }
+
+        console.log('[Admin] Processing upload for:', filename);
+        const thumbnailPath = thumbnailService.saveCustomThumbnail(
+            filename,
+            req.file.buffer,
+            req.file.mimetype
+        );
+
+        console.log('[Admin] Upload successful:', thumbnailPath);
+        res.json({
+            success: true,
+            message: 'Custom thumbnail saved for: ' + filename,
+            thumbnail_url: thumbnailPath
+        });
+    } catch (error) {
+        console.error('[Admin] Thumbnail upload error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Regenerate thumbnail at a custom timestamp
+router.post('/thumbnails/regenerate-at', async (req, res) => {
+    try {
+        console.log('[Admin] Regenerate-at request:', req.body);
+        const { filename, timestamp_seconds } = req.body;
+
+        if (!filename) {
+            return res.status(400).json({ success: false, error: 'filename is required' });
+        }
+
+        const timestamp = parseInt(timestamp_seconds, 10);
+        if (isNaN(timestamp) || timestamp < 0) {
+            return res.status(400).json({ success: false, error: 'timestamp_seconds must be a non-negative number' });
+        }
+
+        console.log('[Admin] Looking for video:', filename);
+        const videoFile = await videoService.findByFilename(filename);
+        if (!videoFile) {
+            console.error('[Admin] Video not found:', filename);
+            return res.status(404).json({ success: false, error: 'Video not found: ' + filename });
+        }
+
+        console.log('[Admin] Video found:', videoFile.key);
+        console.log('[Admin] Generating thumbnail at', timestamp, 'seconds');
+
+        const thumbnailPath = await thumbnailService.generateAtTimestamp(
+            videoFile.key,
+            filename,
+            timestamp
+        );
+
+        console.log('[Admin] Generation result:', thumbnailPath);
+
+        if (thumbnailPath) {
+            res.json({
+                success: true,
+                message: 'Thumbnail regenerated at ' + timestamp + 's for: ' + filename,
+                thumbnail_url: thumbnailPath
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to generate thumbnail at ' + timestamp + 's for: ' + filename
+            });
+        }
+    } catch (error) {
+        console.error('[Admin] Thumbnail regenerate-at error:', error.message);
+        console.error(error.stack);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Delete a specific thumbnail
+router.post('/thumbnails/delete', (req, res) => {
+    try {
+        const { filename } = req.body;
+
+        if (!filename) {
+            return res.status(400).json({ success: false, error: 'filename is required' });
+        }
+
+        console.log('[Admin] Delete request for:', filename);
+        const result = thumbnailService.deleteThumbnail(filename);
+        console.log('[Admin] Delete result:', result);
+
+        if (result.deleted) {
+            res.json({ success: true, message: 'Thumbnail deleted for: ' + filename });
+        } else {
+            res.status(404).json({ success: false, error: 'No thumbnail found for: ' + filename });
+        }
+    } catch (error) {
+        console.error('[Admin] Thumbnail delete error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // Clear failed thumbnails (allow retry)
@@ -55,7 +186,6 @@ router.post('/thumbnails/regenerate', async (req, res) => {
     for (const file of videoFiles) {
         const baseFilename = getBaseFilename(file.filename);
 
-        // Check if thumbnail exists
         if (thumbnailService.exists(file.filename)) {
             existing++;
             continue;
@@ -66,12 +196,10 @@ router.post('/thumbnails/regenerate', async (req, res) => {
             continue;
         }
 
-        // This will queue if at capacity
         thumbnailService.generateThumbnail(file.key, `${baseFilename}.png`);
         queued++;
     }
 
-    // Process queue
     thumbnailService.processQueue();
 
     res.json({
@@ -84,31 +212,36 @@ router.post('/thumbnails/regenerate', async (req, res) => {
     });
 });
 
-// =============================================
-// CHAT ADMIN ROUTES
-// =============================================
+// ─── CHAT ROUTES ──────────────────────────────────────────────────────────────
 
-// Get full chat history
-router.get('/chat', (req, res) => {
-    res.json(chatService.getHistory());
+// Serve chat manager HTML page
+router.get('/chat/manager', (req, res) => {
+    res.sendFile(path.join(process.cwd(), 'public', 'admin', 'chat-manager.html'));
 });
 
-// Delete a chat message by ID (broadcasts chat_delete via socket.io)
-router.delete('/chat/:id', (req, res) => {
-    const { id } = req.params;
+// Get all chat messages
+router.get('/chat/messages', (req, res) => {
+    res.json({ success: true, messages: chatService.getHistory() });
+});
+
+// Delete a chat message by ID
+router.post('/chat/delete', (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ success: false, error: 'id is required' });
+
     const deleted = chatService.deleteMessage(id);
     if (deleted) {
-        res.json({ success: true, id });
+        res.json({ success: true, message: 'Message deleted: ' + id });
     } else {
-        res.status(404).json({ error: 'Message not found' });
+        res.status(404).json({ success: false, error: 'Message not found: ' + id });
     }
 });
 
-// Send a message as Admin (secure server-side isAdmin flag)
+// Send a message as Admin
 router.post('/chat/send', (req, res) => {
     const { text, image } = req.body;
     if (!text && !image) {
-        return res.status(400).json({ error: 'text or image is required' });
+        return res.status(400).json({ success: false, error: 'text or image is required' });
     }
 
     const message = chatService.addMessage({
@@ -117,85 +250,12 @@ router.post('/chat/send', (req, res) => {
         image: image || null,
         sender: 'Admin',
         isAdmin: true,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
     });
 
-    // Broadcast to all connected clients via socket.io
-    const io = chatService.getIo();
-    if (io) {
-        io.emit('chat_message', message);
-    }
-
+    chatService.broadcastMessage(message);
     res.json({ success: true, message });
 });
 
-// =============================================
-// THUMBNAIL ADMIN ROUTES
-// =============================================
-
-// List all existing thumbnails
-router.get('/thumbnails/list', (req, res) => {
-    res.json(thumbnailService.listThumbnails());
-});
-
-// Regenerate thumbnail at a specific timestamp
-router.post('/thumbnails/regenerate-at', async (req, res) => {
-    const { filename, timestamp } = req.body;
-    if (!filename || timestamp === undefined) {
-        return res.status(400).json({ error: 'filename and timestamp are required' });
-    }
-
-    try {
-        const videoFiles = await r2Service.listVideos();
-        const videoFile = videoFiles.find(f => getBaseFilename(f.filename) === getBaseFilename(filename));
-        if (!videoFile) {
-            return res.status(404).json({ error: 'Video not found in R2' });
-        }
-
-        const baseFilename = getBaseFilename(filename);
-        const outputFilename = `${baseFilename}.png`;
-        const newUrl = await thumbnailService.regenerateThumbnailAt(videoFile.key, outputFilename, parseFloat(timestamp));
-
-        if (newUrl) {
-            res.json({ success: true, url: newUrl });
-        } else {
-            res.status(500).json({ error: 'Thumbnail regeneration failed' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Upload a custom thumbnail image
-const thumbnailStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, thumbnailService.THUMBNAIL_DIR),
-    filename: (req, file, cb) => {
-        const { filename } = req.body;
-        if (!filename) return cb(new Error('filename is required'));
-        const baseFilename = getBaseFilename(filename);
-        cb(null, `${baseFilename}.png`);
-    }
-});
-const uploadThumbnail = multer({ storage: thumbnailStorage, limits: { fileSize: 5 * 1024 * 1024 } });
-
-router.post('/thumbnails/upload', uploadThumbnail.single('thumbnail'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No thumbnail file provided' });
-    }
-    const stats = fs.statSync(req.file.path);
-    const url = `/thumbnails/${req.file.filename}?v=${Math.floor(stats.mtimeMs)}`;
-    res.json({ success: true, url });
-});
-
-// Delete a thumbnail
-router.delete('/thumbnails/:filename', (req, res) => {
-    const { filename } = req.params;
-    const deleted = thumbnailService.deleteThumbnail(filename);
-    if (deleted) {
-        res.json({ success: true });
-    } else {
-        res.status(404).json({ error: 'Thumbnail not found' });
-    }
-});
-
 module.exports = router;
+
