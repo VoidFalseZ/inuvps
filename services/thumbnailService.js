@@ -215,16 +215,104 @@ function clearFailed(filename = null) {
 }
 
 /**
- * Check if thumbnail exists for a filename
+ * Check if thumbnail exists for a filename, with mtime cache-busting
  */
 function exists(filename) {
     const baseFilename = getBaseFilename(filename);
     const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
     const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
 
-    if (fs.existsSync(pngPath)) return `/thumbnails/${baseFilename}.png`;
-    if (fs.existsSync(jpgPath)) return `/thumbnails/${baseFilename}.jpg`;
+    if (fs.existsSync(pngPath)) {
+        const stats = fs.statSync(pngPath);
+        return `/thumbnails/${baseFilename}.png?v=${Math.floor(stats.mtimeMs)}`;
+    }
+    if (fs.existsSync(jpgPath)) {
+        const stats = fs.statSync(jpgPath);
+        return `/thumbnails/${baseFilename}.jpg?v=${Math.floor(stats.mtimeMs)}`;
+    }
     return null;
+}
+
+/**
+ * Regenerate thumbnail at a specific timestamp (for admin use)
+ * @param {string} videoKey - R2 video key
+ * @param {string} outputFilename - Output filename (e.g. 'video.png')
+ * @param {number} timestamp - Timestamp in seconds
+ * @returns {Promise<string|null>} Public URL with cache-busting or null on failure
+ */
+async function regenerateThumbnailAt(videoKey, outputFilename, timestamp) {
+    const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
+
+    try {
+        const videoUrl = await r2Service.getSignedVideoUrl(videoKey, 600);
+        if (!videoUrl) {
+            console.error(`[Thumbnail] Failed to get signed URL for regeneration: ${outputFilename}`);
+            return null;
+        }
+
+        await new Promise((resolve, reject) => {
+            console.log(`[Thumbnail] Regenerating at ${timestamp}s: ${outputFilename}`);
+            ffmpeg(videoUrl)
+                .inputOptions([`-ss ${timestamp}`, '-t 1'])
+                .outputOptions(['-vframes 1', '-q:v 2', '-vf scale=320:180', '-y'])
+                .output(outputPath)
+                .on('end', () => {
+                    console.log(`[Thumbnail] Regenerated: ${outputFilename}`);
+                    resolve();
+                })
+                .on('error', (err) => {
+                    console.error(`[Thumbnail] Regeneration failed: ${err.message}`);
+                    reject(err);
+                })
+                .run();
+        });
+
+        // Get updated mtime for cache busting
+        const stats = fs.statSync(outputPath);
+        return `/thumbnails/${outputFilename}?v=${Math.floor(stats.mtimeMs)}`;
+    } catch (error) {
+        console.error(`[Thumbnail] regenerateThumbnailAt error:`, error.message);
+        return null;
+    }
+}
+
+/**
+ * List all existing thumbnails with their mtime-busted URLs
+ * @returns {Array} Array of { filename, url }
+ */
+function listThumbnails() {
+    try {
+        const files = fs.readdirSync(THUMBNAIL_DIR);
+        return files
+            .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
+            .map(f => {
+                const filePath = path.join(THUMBNAIL_DIR, f);
+                const stats = fs.statSync(filePath);
+                return {
+                    filename: f,
+                    url: `/thumbnails/${f}?v=${Math.floor(stats.mtimeMs)}`,
+                    mtime: stats.mtimeMs
+                };
+            })
+            .sort((a, b) => b.mtime - a.mtime);
+    } catch (error) {
+        console.error('[Thumbnail] listThumbnails error:', error.message);
+        return [];
+    }
+}
+
+/**
+ * Delete a thumbnail file
+ * @param {string} filename - Thumbnail filename (e.g. 'video.png')
+ * @returns {boolean}
+ */
+function deleteThumbnail(filename) {
+    const filePath = path.join(THUMBNAIL_DIR, filename);
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -280,5 +368,8 @@ module.exports = {
     exists,
     autoGenerateMissing,
     canRetryThumbnail,
+    regenerateThumbnailAt,
+    listThumbnails,
+    deleteThumbnail,
     THUMBNAIL_DIR
 };

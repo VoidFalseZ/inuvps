@@ -15,6 +15,9 @@ if (!fs.existsSync(CHAT_UPLOADS_DIR)) fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive
 // In-memory chat history
 let chatHistory = [];
 
+// Socket.io instance (set during init)
+let _io = null;
+
 /**
  * Load chat history from file
  */
@@ -65,6 +68,33 @@ function addMessage(msg) {
 }
 
 /**
+ * Delete a message by ID
+ * @param {string} id - Message ID
+ * @returns {boolean} True if deleted, false if not found
+ */
+function deleteMessage(id) {
+    const initialLength = chatHistory.length;
+    chatHistory = chatHistory.filter(m => m.id !== id);
+    if (chatHistory.length < initialLength) {
+        saveHistory();
+        // Broadcast deletion to all connected clients
+        if (_io) {
+            _io.emit('chat_delete', { id });
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Get the socket.io instance
+ * @returns {Server|null}
+ */
+function getIo() {
+    return _io;
+}
+
+/**
  * Get current chat history
  * @returns {Array} Chat messages
  */
@@ -93,6 +123,8 @@ function pruneOldMessages() {
  * @param {Server} io - Socket.io server instance
  */
 function initSocketHandlers(io) {
+    _io = io; // Store io instance for admin broadcasts
+
     io.on('connection', (socket) => {
         console.log('[Socket] Client connected:', socket.id);
 
@@ -118,8 +150,10 @@ module.exports = {
     loadHistory,
     saveHistory,
     addMessage,
+    deleteMessage,
     getHistory,
     pruneOldMessages,
     initSocketHandlers,
+    getIo,
     CHAT_UPLOADS_DIR
 };
