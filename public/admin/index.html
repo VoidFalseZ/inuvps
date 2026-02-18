@@ -1,651 +1,132 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>InuPoi Admin Dashboard</title>
+    <title>InuPoi Admin</title>
     <style>
         :root {
             --bg: #0d0d0d;
             --surface: #1a1a1a;
-            --surface2: #242424;
             --border: #2e2e2e;
             --text: #e8e8e8;
             --text-muted: #888;
             --accent: #7c3aed;
             --accent-light: #a78bfa;
             --gold: #FFD700;
-            --gold-dark: #b8960c;
-            --danger: #ef4444;
-            --danger-dark: #b91c1c;
-            --success: #22c55e;
-            --radius: 10px;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             font-family: 'Segoe UI', system-ui, sans-serif;
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
-        }
-
-        /* ---- HEADER ---- */
-        header {
-            background: linear-gradient(135deg, #1a0533 0%, #0d1a33 100%);
-            border-bottom: 1px solid var(--border);
-            padding: 16px 24px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        header h1 { font-size: 20px; font-weight: 700; color: var(--accent-light); }
-        header .crown { font-size: 24px; }
-        .api-key-bar {
-            margin-left: auto;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .api-key-bar input {
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 6px 12px;
-            color: var(--text);
-            font-size: 13px;
-            width: 220px;
-        }
-        .api-key-bar button {
-            background: var(--accent);
-            border: none;
-            border-radius: var(--radius);
-            color: #fff;
-            padding: 6px 14px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        .api-key-bar button:hover { background: #6d28d9; }
-
-        /* ---- TABS ---- */
-        .tabs {
-            display: flex;
-            gap: 4px;
-            padding: 16px 24px 0;
-            border-bottom: 1px solid var(--border);
-        }
-        .tab-btn {
-            background: none;
-            border: none;
-            border-bottom: 3px solid transparent;
-            color: var(--text-muted);
-            padding: 10px 20px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            transition: all 0.2s;
-        }
-        .tab-btn.active {
-            color: var(--accent-light);
-            border-bottom-color: var(--accent-light);
-        }
-        .tab-btn:hover { color: var(--text); }
-
-        /* ---- PANELS ---- */
-        .panel { display: none; padding: 24px; }
-        .panel.active { display: flex; flex-direction: column; gap: 16px; }
-
-        /* ---- CHAT PANEL ---- */
-        .chat-layout {
-            display: grid;
-            grid-template-rows: 1fr auto;
-            height: calc(100vh - 160px);
-            gap: 16px;
-        }
-        .chat-messages {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow-y: auto;
-            padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 10px;
-        }
-        .msg-row {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-        }
-        .msg-row.admin-msg {
-            border-color: var(--gold);
-            background: #1a1200;
-        }
-        .msg-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: var(--accent);
-            display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 14px;
-            flex-shrink: 0;
+            gap: 40px;
         }
-        .msg-avatar.admin-avatar { background: var(--gold); color: #1a1200; }
-        .msg-body { flex: 1; min-width: 0; }
-        .msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-        .msg-sender { font-size: 13px; font-weight: 600; color: var(--accent-light); }
-        .msg-sender.admin-sender { color: var(--gold); }
-        .admin-badge {
-            background: var(--gold);
-            color: #1a1200;
-            font-size: 10px;
-            font-weight: 700;
-            padding: 1px 6px;
-            border-radius: 4px;
-        }
-        .msg-time { font-size: 11px; color: var(--text-muted); margin-left: auto; }
-        .msg-text { font-size: 14px; color: var(--text); word-break: break-word; }
-        .msg-text.admin-text { color: #FFE87C; }
-        .msg-img { max-width: 200px; border-radius: 8px; margin-top: 6px; }
-        .msg-actions { margin-left: auto; flex-shrink: 0; }
-        .btn-delete {
-            background: none;
-            border: 1px solid var(--danger);
-            color: var(--danger);
-            border-radius: 6px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
-        }
-        .btn-delete:hover { background: var(--danger); color: #fff; }
 
-        /* ---- COMPOSE BAR ---- */
-        .compose-bar {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 14px 16px;
-            display: flex;
-            gap: 10px;
-            align-items: flex-end;
+        .logo {
+            text-align: center;
         }
-        .compose-bar textarea {
-            flex: 1;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            padding: 10px 14px;
-            font-size: 14px;
-            resize: none;
-            min-height: 44px;
-            max-height: 120px;
-            font-family: inherit;
-        }
-        .compose-bar textarea:focus { outline: none; border-color: var(--accent); }
-        .btn-send-admin {
-            background: linear-gradient(135deg, var(--gold-dark), var(--gold));
-            border: none;
-            border-radius: 8px;
-            color: #1a1200;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 14px;
-            white-space: nowrap;
-        }
-        .btn-send-admin:hover { opacity: 0.9; }
-        .btn-send-admin:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* ---- THUMBNAIL PANEL ---- */
-        .thumb-controls {
+        .logo .crown {
+            font-size: 56px;
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        .logo h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--accent-light);
+        }
+
+        .logo p {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-top: 6px;
+        }
+
+        .cards {
             display: flex;
-            gap: 12px;
+            gap: 20px;
             flex-wrap: wrap;
+            justify-content: center;
         }
+
         .card {
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 18px;
-            flex: 1;
-            min-width: 280px;
-        }
-        .card h3 { font-size: 14px; font-weight: 700; color: var(--accent-light); margin-bottom: 14px; }
-        .form-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-        .form-row label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-        .form-row input, .form-row select {
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            padding: 8px 12px;
-            font-size: 13px;
-        }
-        .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--accent); }
-        .btn-primary {
-            background: var(--accent);
-            border: none;
-            border-radius: 8px;
-            color: #fff;
-            padding: 9px 18px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 13px;
-            width: 100%;
-        }
-        .btn-primary:hover { background: #6d28d9; }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .thumb-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 14px;
-        }
-        .thumb-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow: hidden;
-        }
-        .thumb-card img {
-            width: 100%;
-            aspect-ratio: 16/9;
-            object-fit: cover;
-            display: block;
-        }
-        .thumb-card-body { padding: 10px; }
-        .thumb-card-name {
-            font-size: 11px;
-            color: var(--text-muted);
-            word-break: break-all;
-            margin-bottom: 8px;
-        }
-        .thumb-card-actions { display: flex; gap: 6px; }
-        .btn-sm {
-            border: none;
-            border-radius: 6px;
-            padding: 5px 10px;
-            cursor: pointer;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .btn-sm.danger { background: var(--danger); color: #fff; }
-        .btn-sm.danger:hover { background: var(--danger-dark); }
-
-        /* ---- STATUS / TOAST ---- */
-        #toast {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 12px 18px;
-            font-size: 13px;
-            color: var(--text);
-            opacity: 0;
-            transition: opacity 0.3s;
-            z-index: 1000;
-            max-width: 320px;
-        }
-        #toast.show { opacity: 1; }
-        #toast.success { border-color: var(--success); color: var(--success); }
-        #toast.error { border-color: var(--danger); color: var(--danger); }
-
-        .empty-state {
+            border-radius: 16px;
+            padding: 32px 36px;
             text-align: center;
-            padding: 40px;
-            color: var(--text-muted);
-            font-size: 14px;
+            text-decoration: none;
+            color: var(--text);
+            width: 220px;
+            transition: all 0.2s;
+            cursor: pointer;
         }
-        .loading { color: var(--text-muted); font-size: 13px; padding: 20px; text-align: center; }
+
+        .card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 32px rgba(124, 58, 237, 0.2);
+        }
+
+        .card.gold:hover {
+            border-color: var(--gold);
+            box-shadow: 0 8px 32px rgba(255, 215, 0, 0.15);
+        }
+
+        .card .icon {
+            font-size: 48px;
+            display: block;
+            margin-bottom: 14px;
+        }
+
+        .card h2 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .card p {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
     </style>
 </head>
+
 <body>
-
-<header>
-    <span class="crown">👑</span>
-    <h1>InuPoi Admin Dashboard</h1>
-    <div class="api-key-bar">
-        <input type="password" id="apiKeyInput" placeholder="Admin API Key" value="inupoi-admin-2024">
-        <button onclick="loadAll()">Connect</button>
-    </div>
-</header>
-
-<div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('chat', this)">💬 Chat Manager</button>
-    <button class="tab-btn" onclick="switchTab('thumbnails', this)">🖼️ Thumbnail Manager</button>
-</div>
-
-<!-- CHAT PANEL -->
-<div id="panel-chat" class="panel active">
-    <div class="chat-layout">
-        <div class="chat-messages" id="chatMessages">
-            <div class="loading">Loading chat history...</div>
-        </div>
-        <div class="compose-bar">
-            <textarea id="adminMsgInput" placeholder="Type an admin announcement..." rows="1"
-                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminMessage();}"></textarea>
-            <button class="btn-send-admin" onclick="sendAdminMessage()" id="sendAdminBtn">
-                👑 Send as Admin
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- THUMBNAIL PANEL -->
-<div id="panel-thumbnails" class="panel">
-    <div class="thumb-controls">
-        <!-- Regenerate at Timestamp -->
-        <div class="card">
-            <h3>⏱️ Regenerate at Timestamp</h3>
-            <div class="form-row">
-                <label>Video Filename (e.g. episode01.mp4)</label>
-                <input type="text" id="regenFilename" placeholder="episode01.mp4">
-            </div>
-            <div class="form-row">
-                <label>Timestamp (seconds)</label>
-                <input type="number" id="regenTimestamp" placeholder="30" value="30" min="0">
-            </div>
-            <button class="btn-primary" onclick="regenerateAt()" id="regenBtn">Regenerate Thumbnail</button>
-        </div>
-
-        <!-- Upload Custom Thumbnail -->
-        <div class="card">
-            <h3>📤 Upload Custom Thumbnail</h3>
-            <div class="form-row">
-                <label>Video Filename (e.g. episode01.mp4)</label>
-                <input type="text" id="uploadFilename" placeholder="episode01.mp4">
-            </div>
-            <div class="form-row">
-                <label>Image File (PNG/JPG)</label>
-                <input type="file" id="uploadFile" accept="image/*" style="color: var(--text);">
-            </div>
-            <button class="btn-primary" onclick="uploadThumbnail()" id="uploadBtn">Upload Thumbnail</button>
-        </div>
+    <div class="logo">
+        <span class="crown">👑</span>
+        <h1>InuPoi Admin</h1>
+        <p>Select a management panel</p>
     </div>
 
-    <div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <h3 style="color: var(--text-muted); font-size:13px; font-weight:600;">EXISTING THUMBNAILS</h3>
-            <button class="btn-primary" style="width:auto; padding: 6px 14px;" onclick="loadThumbnails()">🔄 Refresh</button>
-        </div>
-        <div class="thumb-grid" id="thumbGrid">
-            <div class="loading">Loading thumbnails...</div>
-        </div>
+    <div class="cards">
+        <a class="card" href="chat.html">
+            <span class="icon">💬</span>
+            <h2>Chat Manager</h2>
+            <p>View history, delete messages, send admin announcements</p>
+        </a>
+        <a class="card gold" href="thumbnails.html">
+            <span class="icon">🖼️</span>
+            <h2>Thumbnail Manager</h2>
+            <p>Upload, regenerate, and delete video thumbnails</p>
+        </a>
     </div>
-</div>
-
-<div id="toast"></div>
-
-<script>
-    let API_KEY = 'inupoi-admin-2024';
-    const BASE = window.location.origin;
-
-    function getKey() {
-        return document.getElementById('apiKeyInput').value.trim() || API_KEY;
-    }
-
-    function headers() {
-        return { 'Content-Type': 'application/json', 'x-admin-key': getKey() };
-    }
-
-    function showToast(msg, type = 'success') {
-        const t = document.getElementById('toast');
-        t.textContent = msg;
-        t.className = `show ${type}`;
-        clearTimeout(t._timer);
-        t._timer = setTimeout(() => t.className = '', 3000);
-    }
-
-    function switchTab(name, btn) {
-        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(`panel-${name}`).classList.add('active');
-        btn.classList.add('active');
-        if (name === 'thumbnails') loadThumbnails();
-    }
-
-    function loadAll() {
-        loadChat();
-        if (document.getElementById('panel-thumbnails').classList.contains('active')) {
-            loadThumbnails();
-        }
-    }
-
-    // =============================================
-    // CHAT
-    // =============================================
-    async function loadChat() {
-        try {
-            const res = await fetch(`${BASE}/api/admin/chat`, { headers: headers() });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const messages = await res.json();
-            renderChat(messages);
-        } catch (e) {
-            document.getElementById('chatMessages').innerHTML = `<div class="empty-state">❌ Failed to load chat: ${e.message}</div>`;
-        }
-    }
-
-    function renderChat(messages) {
-        const container = document.getElementById('chatMessages');
-        if (!messages.length) {
-            container.innerHTML = '<div class="empty-state">No messages yet.</div>';
-            return;
-        }
-        container.innerHTML = messages.map(msg => buildMsgHtml(msg)).join('');
-        container.scrollTop = container.scrollHeight;
-    }
-
-    function buildMsgHtml(msg) {
-        const isAdmin = msg.isAdmin === true;
-        const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const avatarChar = (msg.sender || '?')[0].toUpperCase();
-        const imgHtml = msg.image ? `<img src="${BASE}${msg.image}" class="msg-img" alt="image">` : '';
-        const textHtml = msg.text ? `<div class="msg-text ${isAdmin ? 'admin-text' : ''}">${escHtml(msg.text)}</div>` : '';
-        const badgeHtml = isAdmin ? '<span class="admin-badge">👑 ADMIN</span>' : '';
-
-        return `
-        <div class="msg-row ${isAdmin ? 'admin-msg' : ''}" id="msg-${msg.id}">
-            <div class="msg-avatar ${isAdmin ? 'admin-avatar' : ''}">${avatarChar}</div>
-            <div class="msg-body">
-                <div class="msg-header">
-                    <span class="msg-sender ${isAdmin ? 'admin-sender' : ''}">${escHtml(msg.sender || 'Unknown')}</span>
-                    ${badgeHtml}
-                    <span class="msg-time">${time}</span>
-                </div>
-                ${textHtml}
-                ${imgHtml}
-            </div>
-            <div class="msg-actions">
-                <button class="btn-delete" onclick="deleteMessage('${msg.id}')">🗑️ Delete</button>
-            </div>
-        </div>`;
-    }
-
-    async function deleteMessage(id) {
-        if (!confirm('Delete this message? It will be removed from all connected clients.')) return;
-        try {
-            const res = await fetch(`${BASE}/api/admin/chat/${id}`, {
-                method: 'DELETE',
-                headers: headers()
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            // Remove from DOM immediately
-            const el = document.getElementById(`msg-${id}`);
-            if (el) el.remove();
-            showToast('Message deleted and broadcast to all clients.', 'success');
-        } catch (e) {
-            showToast(`Delete failed: ${e.message}`, 'error');
-        }
-    }
-
-    async function sendAdminMessage() {
-        const input = document.getElementById('adminMsgInput');
-        const text = input.value.trim();
-        if (!text) return;
-
-        const btn = document.getElementById('sendAdminBtn');
-        btn.disabled = true;
-        btn.textContent = 'Sending...';
-
-        try {
-            const res = await fetch(`${BASE}/api/admin/chat/send`, {
-                method: 'POST',
-                headers: headers(),
-                body: JSON.stringify({ text })
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            input.value = '';
-
-            // Append to chat immediately
-            const container = document.getElementById('chatMessages');
-            container.insertAdjacentHTML('beforeend', buildMsgHtml(data.message));
-            container.scrollTop = container.scrollHeight;
-            showToast('Admin message sent!', 'success');
-        } catch (e) {
-            showToast(`Send failed: ${e.message}`, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = '👑 Send as Admin';
-        }
-    }
-
-    // =============================================
-    // THUMBNAILS
-    // =============================================
-    async function loadThumbnails() {
-        const grid = document.getElementById('thumbGrid');
-        grid.innerHTML = '<div class="loading">Loading...</div>';
-        try {
-            const res = await fetch(`${BASE}/api/admin/thumbnails/list`, { headers: headers() });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const thumbs = await res.json();
-            renderThumbnails(thumbs);
-        } catch (e) {
-            grid.innerHTML = `<div class="empty-state">❌ Failed: ${e.message}</div>`;
-        }
-    }
-
-    function renderThumbnails(thumbs) {
-        const grid = document.getElementById('thumbGrid');
-        if (!thumbs.length) {
-            grid.innerHTML = '<div class="empty-state">No thumbnails found.</div>';
-            return;
-        }
-        grid.innerHTML = thumbs.map(t => `
-            <div class="thumb-card" id="thumb-${t.filename}">
-                <img src="${BASE}${t.url}?t=${Date.now()}" alt="${t.filename}" loading="lazy"
-                     onerror="this.style.background='#333'; this.style.height='112px';">
-                <div class="thumb-card-body">
-                    <div class="thumb-card-name">${escHtml(t.filename)}</div>
-                    <div class="thumb-card-actions">
-                        <button class="btn-sm danger" onclick="deleteThumbnail('${t.filename}')">🗑️ Delete</button>
-                    </div>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    async function regenerateAt() {
-        const filename = document.getElementById('regenFilename').value.trim();
-        const timestamp = document.getElementById('regenTimestamp').value;
-        if (!filename) { showToast('Enter a video filename.', 'error'); return; }
-
-        const btn = document.getElementById('regenBtn');
-        btn.disabled = true;
-        btn.textContent = 'Regenerating...';
-
-        try {
-            const res = await fetch(`${BASE}/api/admin/thumbnails/regenerate-at`, {
-                method: 'POST',
-                headers: headers(),
-                body: JSON.stringify({ filename, timestamp: parseFloat(timestamp) })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-            showToast(`✅ Thumbnail regenerated! URL: ${data.url}`, 'success');
-            loadThumbnails();
-        } catch (e) {
-            showToast(`Regeneration failed: ${e.message}`, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Regenerate Thumbnail';
-        }
-    }
-
-    async function uploadThumbnail() {
-        const filenameInput = document.getElementById('uploadFilename');
-        const fileInput = document.getElementById('uploadFile');
-        const filename = filenameInput.value.trim();
-        const file = fileInput.files[0];
-
-        if (!filename) { showToast('Enter a video filename.', 'error'); return; }
-        if (!file) { showToast('Select an image file.', 'error'); return; }
-
-        const btn = document.getElementById('uploadBtn');
-        btn.disabled = true;
-        btn.textContent = 'Uploading...';
-
-        // CORRECT FLOW: Create FormData BEFORE clearing state
-        const formData = new FormData();
-        formData.append('thumbnail', file);
-        formData.append('filename', filename);
-
-        // THEN clear UI state
-        filenameInput.value = '';
-        fileInput.value = '';
-
-        try {
-            const res = await fetch(`${BASE}/api/admin/thumbnails/upload`, {
-                method: 'POST',
-                headers: { 'x-admin-key': getKey() }, // No Content-Type for multipart
-                body: formData
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-            showToast(`✅ Thumbnail uploaded!`, 'success');
-            loadThumbnails();
-        } catch (e) {
-            showToast(`Upload failed: ${e.message}`, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Upload Thumbnail';
-        }
-    }
-
-    async function deleteThumbnail(filename) {
-        if (!confirm(`Delete thumbnail: ${filename}?`)) return;
-        try {
-            const res = await fetch(`${BASE}/api/admin/thumbnails/${encodeURIComponent(filename)}`, {
-                method: 'DELETE',
-                headers: headers()
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const el = document.getElementById(`thumb-${filename}`);
-            if (el) el.remove();
-            showToast('Thumbnail deleted.', 'success');
-        } catch (e) {
-            showToast(`Delete failed: ${e.message}`, 'error');
-        }
-    }
-
-    function escHtml(str) {
-        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    // Initial load
-    loadChat();
-</script>
 </body>
+
 </html>

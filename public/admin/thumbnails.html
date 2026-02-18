@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thumbnail Manager — InuPoi Admin</title>
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --surface: #1a1a1a;
+            --surface2: #242424;
+            --border: #2e2e2e;
+            --text: #e8e8e8;
+            --text-muted: #888;
+            --accent: #7c3aed;
+            --accent-light: #a78bfa;
+            --gold: #FFD700;
+            --danger: #ef4444;
+            --danger-dark: #b91c1c;
+            --success: #22c55e;
+            --radius: 10px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: linear-gradient(135deg, #1a1200 0%, #0d1a33 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        header a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        header a:hover {
+            color: var(--text);
+        }
+
+        header .sep {
+            color: var(--border);
+        }
+
+        header h1 {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--gold);
+        }
+
+        .api-key-bar {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .api-key-bar input {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 6px 12px;
+            color: var(--text);
+            font-size: 13px;
+            width: 200px;
+        }
+
+        .api-key-bar button {
+            background: var(--accent);
+            border: none;
+            border-radius: var(--radius);
+            color: #fff;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .api-key-bar button:hover {
+            background: #6d28d9;
+        }
+
+        .main {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .controls-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px;
+            flex: 1;
+            min-width: 260px;
+        }
+
+        .card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-light);
+            margin-bottom: 14px;
+        }
+
+        .card.gold-card h3 {
+            color: var(--gold);
+        }
+
+        .form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        .form-row label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .form-row input {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
+        .form-row input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-row input[type="file"] {
+            color: var(--text-muted);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            padding: 9px 18px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background: #6d28d9;
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-gold {
+            background: linear-gradient(135deg, #b8960c, var(--gold));
+            border: none;
+            border-radius: 8px;
+            color: #1a1200;
+            padding: 9px 18px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 13px;
+            width: 100%;
+        }
+
+        .btn-gold:hover {
+            opacity: 0.9;
+        }
+
+        .btn-gold:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .section-header h2 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .btn-refresh {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .btn-refresh:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+
+        .thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            gap: 14px;
+        }
+
+        .thumb-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .thumb-card:hover {
+            border-color: var(--gold);
+        }
+
+        .thumb-card img {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+            display: block;
+            background: var(--surface2);
+        }
+
+        .thumb-card-body {
+            padding: 10px;
+        }
+
+        .thumb-card-name {
+            font-size: 11px;
+            color: var(--text-muted);
+            word-break: break-all;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .thumb-card-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .btn-sm {
+            border: none;
+            border-radius: 6px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .btn-sm.danger {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        .btn-sm.danger:hover {
+            background: var(--danger-dark);
+        }
+
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--text);
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+            max-width: 320px;
+        }
+
+        #toast.show {
+            opacity: 1;
+        }
+
+        #toast.success {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        #toast.error {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .loading {
+            color: var(--text-muted);
+            font-size: 13px;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <a href="index.html">← Admin</a>
+        <span class="sep">›</span>
+        <h1>🖼️ Thumbnail Manager</h1>
+        <div class="api-key-bar">
+            <input type="password" id="apiKeyInput" placeholder="Admin API Key" value="inupoi-admin-2024">
+            <button onclick="loadThumbnails()">🔄 Refresh</button>
+        </div>
+    </header>
+
+    <div class="main">
+        <!-- Controls -->
+        <div class="controls-row">
+            <!-- Regenerate at Timestamp -->
+            <div class="card">
+                <h3>⏱️ Regenerate at Timestamp</h3>
+                <div class="form-row">
+                    <label>Video Filename (e.g. episode01.mp4)</label>
+                    <input type="text" id="regenFilename" placeholder="episode01.mp4">
+                </div>
+                <div class="form-row">
+                    <label>Timestamp (seconds)</label>
+                    <input type="number" id="regenTimestamp" placeholder="30" value="30" min="0">
+                </div>
+                <button class="btn-primary" onclick="regenerateAt()" id="regenBtn">⚙️ Regenerate Thumbnail</button>
+            </div>
+
+            <!-- Upload Custom Thumbnail -->
+            <div class="card gold-card">
+                <h3>📤 Upload Custom Thumbnail</h3>
+                <div class="form-row">
+                    <label>Video Filename (e.g. episode01.mp4)</label>
+                    <input type="text" id="uploadFilename" placeholder="episode01.mp4">
+                </div>
+                <div class="form-row">
+                    <label>Image File (PNG/JPG)</label>
+                    <input type="file" id="uploadFile" accept="image/*">
+                </div>
+                <button class="btn-gold" onclick="uploadThumbnail()" id="uploadBtn">📤 Upload Thumbnail</button>
+            </div>
+        </div>
+
+        <!-- Thumbnail Grid -->
+        <div>
+            <div class="section-header">
+                <h2>Existing Thumbnails</h2>
+                <button class="btn-refresh" onclick="loadThumbnails()">🔄 Refresh Grid</button>
+            </div>
+            <div class="thumb-grid" id="thumbGrid">
+                <div class="loading">Loading thumbnails...</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const BASE = window.location.origin;
+
+        function getKey() { return document.getElementById('apiKeyInput').value.trim(); }
+        function headers() { return { 'Content-Type': 'application/json', 'x-admin-key': getKey() }; }
+
+        function showToast(msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `show ${type}`;
+            clearTimeout(t._timer);
+            t._timer = setTimeout(() => t.className = '', 3500);
+        }
+
+        async function loadThumbnails() {
+            const grid = document.getElementById('thumbGrid');
+            grid.innerHTML = '<div class="loading">Loading...</div>';
+            try {
+                const res = await fetch(`${BASE}/api/admin/thumbnails/list`, { headers: headers() });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const thumbs = await res.json();
+                renderThumbnails(thumbs);
+            } catch (e) {
+                grid.innerHTML = `<div class="empty-state">❌ Failed: ${e.message}</div>`;
+            }
+        }
+
+        function renderThumbnails(thumbs) {
+            const grid = document.getElementById('thumbGrid');
+            if (!thumbs.length) {
+                grid.innerHTML = '<div class="empty-state">No thumbnails found.</div>';
+                return;
+            }
+            grid.innerHTML = thumbs.map(t => `
+            <div class="thumb-card" id="thumb-${CSS.escape(t.filename)}">
+                <img src="${BASE}${t.url}&t=${Date.now()}" alt="${escHtml(t.filename)}" loading="lazy"
+                     onerror="this.style.minHeight='112px'; this.style.background='#333';">
+                <div class="thumb-card-body">
+                    <div class="thumb-card-name">${escHtml(t.filename)}</div>
+                    <div class="thumb-card-actions">
+                        <button class="btn-sm danger" onclick="deleteThumbnail('${escHtml(t.filename)}')">🗑️ Delete</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        }
+
+        async function regenerateAt() {
+            const filename = document.getElementById('regenFilename').value.trim();
+            const timestamp = document.getElementById('regenTimestamp').value;
+            if (!filename) { showToast('Enter a video filename.', 'error'); return; }
+            const btn = document.getElementById('regenBtn');
+            btn.disabled = true; btn.textContent = '⏳ Regenerating...';
+            try {
+                const res = await fetch(`${BASE}/api/admin/thumbnails/regenerate-at`, {
+                    method: 'POST', headers: headers(),
+                    body: JSON.stringify({ filename, timestamp: parseFloat(timestamp) })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                showToast('✅ Thumbnail regenerated!', 'success');
+                loadThumbnails();
+            } catch (e) {
+                showToast(`Regeneration failed: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '⚙️ Regenerate Thumbnail';
+            }
+        }
+
+        async function uploadThumbnail() {
+            const filenameInput = document.getElementById('uploadFilename');
+            const fileInput = document.getElementById('uploadFile');
+            const filename = filenameInput.value.trim();
+            const file = fileInput.files[0];
+            if (!filename) { showToast('Enter a video filename.', 'error'); return; }
+            if (!file) { showToast('Select an image file.', 'error'); return; }
+
+            const btn = document.getElementById('uploadBtn');
+            btn.disabled = true; btn.textContent = '⏳ Uploading...';
+
+            // Create FormData BEFORE clearing inputs (prevents "null string" bug)
+            const formData = new FormData();
+            formData.append('thumbnail', file);
+            formData.append('filename', filename);
+
+            // Clear inputs AFTER FormData is built
+            filenameInput.value = '';
+            fileInput.value = '';
+
+            try {
+                const res = await fetch(`${BASE}/api/admin/thumbnails/upload`, {
+                    method: 'POST',
+                    headers: { 'x-admin-key': getKey() }, // No Content-Type — let browser set multipart boundary
+                    body: formData
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+                showToast('✅ Thumbnail uploaded!', 'success');
+                loadThumbnails();
+            } catch (e) {
+                showToast(`Upload failed: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '📤 Upload Thumbnail';
+            }
+        }
+
+        async function deleteThumbnail(filename) {
+            if (!confirm(`Delete thumbnail: ${filename}?`)) return;
+            try {
+                const res = await fetch(`${BASE}/api/admin/thumbnails/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE', headers: headers()
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                document.getElementById(`thumb-${CSS.escape(filename)}`)?.remove();
+                showToast('Thumbnail deleted.', 'success');
+            } catch (e) {
+                showToast(`Delete failed: ${e.message}`, 'error');
+            }
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        loadThumbnails();
+    </script>
+</body>
+
+</html>

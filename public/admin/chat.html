@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Manager — InuPoi Admin</title>
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --surface: #1a1a1a;
+            --surface2: #242424;
+            --border: #2e2e2e;
+            --text: #e8e8e8;
+            --text-muted: #888;
+            --accent: #7c3aed;
+            --accent-light: #a78bfa;
+            --gold: #FFD700;
+            --gold-dark: #b8960c;
+            --danger: #ef4444;
+            --danger-dark: #b91c1c;
+            --success: #22c55e;
+            --radius: 10px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: linear-gradient(135deg, #1a0533 0%, #0d1a33 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        header a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        header a:hover {
+            color: var(--text);
+        }
+
+        header .sep {
+            color: var(--border);
+        }
+
+        header h1 {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--accent-light);
+        }
+
+        .api-key-bar {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .api-key-bar input {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 6px 12px;
+            color: var(--text);
+            font-size: 13px;
+            width: 200px;
+        }
+
+        .api-key-bar button {
+            background: var(--accent);
+            border: none;
+            border-radius: var(--radius);
+            color: #fff;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .api-key-bar button:hover {
+            background: #6d28d9;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow-y: auto;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .msg-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+        }
+
+        .msg-row.admin-msg {
+            border-color: var(--gold);
+            background: #1a1200;
+        }
+
+        .msg-avatar {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+
+        .msg-avatar.admin-avatar {
+            background: var(--gold);
+            color: #1a1200;
+        }
+
+        .msg-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .msg-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+        }
+
+        .msg-sender {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--accent-light);
+        }
+
+        .msg-sender.admin-sender {
+            color: var(--gold);
+        }
+
+        .admin-badge {
+            background: var(--gold);
+            color: #1a1200;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .msg-time {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: auto;
+        }
+
+        .msg-text {
+            font-size: 14px;
+            color: var(--text);
+            word-break: break-word;
+        }
+
+        .msg-text.admin-text {
+            color: #FFE87C;
+        }
+
+        .msg-img {
+            max-width: 180px;
+            border-radius: 8px;
+            margin-top: 6px;
+        }
+
+        .msg-actions {
+            margin-left: auto;
+            flex-shrink: 0;
+        }
+
+        .btn-delete {
+            background: none;
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            border-radius: 6px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .btn-delete:hover {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        .compose-bar {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            flex-shrink: 0;
+        }
+
+        .compose-bar textarea {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 10px 14px;
+            font-size: 14px;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            font-family: inherit;
+        }
+
+        .compose-bar textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn-send-admin {
+            background: linear-gradient(135deg, var(--gold-dark), var(--gold));
+            border: none;
+            border-radius: 8px;
+            color: #1a1200;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        .btn-send-admin:hover {
+            opacity: 0.9;
+        }
+
+        .btn-send-admin:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--text);
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+        }
+
+        #toast.show {
+            opacity: 1;
+        }
+
+        #toast.success {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        #toast.error {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .loading {
+            color: var(--text-muted);
+            font-size: 13px;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <a href="index.html">← Admin</a>
+        <span class="sep">›</span>
+        <h1>💬 Chat Manager</h1>
+        <div class="api-key-bar">
+            <input type="password" id="apiKeyInput" placeholder="Admin API Key" value="inupoi-admin-2024">
+            <button onclick="loadChat()">🔄 Refresh</button>
+        </div>
+    </header>
+
+    <div class="main">
+        <div class="chat-messages" id="chatMessages">
+            <div class="loading">Loading chat history...</div>
+        </div>
+        <div class="compose-bar">
+            <textarea id="adminMsgInput"
+                placeholder="Type an admin announcement... (Enter to send, Shift+Enter for newline)"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminMessage();}"></textarea>
+            <button class="btn-send-admin" onclick="sendAdminMessage()" id="sendAdminBtn">
+                👑 Send as Admin
+            </button>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const BASE = window.location.origin;
+
+        function getKey() { return document.getElementById('apiKeyInput').value.trim(); }
+        function headers() { return { 'Content-Type': 'application/json', 'x-admin-key': getKey() }; }
+
+        function showToast(msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `show ${type}`;
+            clearTimeout(t._timer);
+            t._timer = setTimeout(() => t.className = '', 3000);
+        }
+
+        async function loadChat() {
+            const container = document.getElementById('chatMessages');
+            container.innerHTML = '<div class="loading">Loading...</div>';
+            try {
+                const res = await fetch(`${BASE}/api/admin/chat`, { headers: headers() });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const messages = await res.json();
+                renderChat(messages);
+            } catch (e) {
+                container.innerHTML = `<div class="empty-state">❌ Failed: ${e.message}</div>`;
+            }
+        }
+
+        function renderChat(messages) {
+            const container = document.getElementById('chatMessages');
+            if (!messages.length) {
+                container.innerHTML = '<div class="empty-state">No messages yet.</div>';
+                return;
+            }
+            container.innerHTML = messages.map(buildMsgHtml).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function buildMsgHtml(msg) {
+            const isAdmin = msg.isAdmin === true;
+            const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const avatarChar = (msg.sender || '?')[0].toUpperCase();
+            const imgHtml = msg.image ? `<img src="${BASE}${msg.image}" class="msg-img" alt="image">` : '';
+            const textHtml = msg.text ? `<div class="msg-text ${isAdmin ? 'admin-text' : ''}">${escHtml(msg.text)}</div>` : '';
+            const badgeHtml = isAdmin ? '<span class="admin-badge">👑 ADMIN</span>' : '';
+            return `
+        <div class="msg-row ${isAdmin ? 'admin-msg' : ''}" id="msg-${msg.id}">
+            <div class="msg-avatar ${isAdmin ? 'admin-avatar' : ''}">${avatarChar}</div>
+            <div class="msg-body">
+                <div class="msg-header">
+                    <span class="msg-sender ${isAdmin ? 'admin-sender' : ''}">${escHtml(msg.sender || 'Unknown')}</span>
+                    ${badgeHtml}
+                    <span class="msg-time">${time}</span>
+                </div>
+                ${textHtml}${imgHtml}
+            </div>
+            <div class="msg-actions">
+                <button class="btn-delete" onclick="deleteMessage('${msg.id}')">🗑️ Delete</button>
+            </div>
+        </div>`;
+        }
+
+        async function deleteMessage(id) {
+            if (!confirm('Delete this message? It will be removed from all connected clients.')) return;
+            try {
+                const res = await fetch(`${BASE}/api/admin/chat/${id}`, { method: 'DELETE', headers: headers() });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                document.getElementById(`msg-${id}`)?.remove();
+                showToast('Message deleted.', 'success');
+            } catch (e) {
+                showToast(`Delete failed: ${e.message}`, 'error');
+            }
+        }
+
+        async function sendAdminMessage() {
+            const input = document.getElementById('adminMsgInput');
+            const text = input.value.trim();
+            if (!text) return;
+            const btn = document.getElementById('sendAdminBtn');
+            btn.disabled = true; btn.textContent = 'Sending...';
+            try {
+                const res = await fetch(`${BASE}/api/admin/chat/send`, {
+                    method: 'POST', headers: headers(), body: JSON.stringify({ text })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                input.value = '';
+                const container = document.getElementById('chatMessages');
+                container.insertAdjacentHTML('beforeend', buildMsgHtml(data.message));
+                container.scrollTop = container.scrollHeight;
+                showToast('Admin message sent!', 'success');
+            } catch (e) {
+                showToast(`Send failed: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '👑 Send as Admin';
+            }
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        loadChat();
+    </script>
+</body>
+
+</html>
