@@ -37,6 +37,40 @@ const failedThumbnails = new Map();
 const thumbnailQueue = [];
 let isProcessingQueue = false;
 
+// In-memory thumbnail URL cache
+// Maps baseFilename -> { url: string, cachedAt: number }
+const thumbnailCache = new Map();
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+function setCacheEntry(baseFilename, url) {
+    thumbnailCache.set(baseFilename, { url, cachedAt: Date.now() });
+}
+
+function invalidateCacheEntry(filename) {
+    const baseFilename = getBaseFilename(filename);
+    thumbnailCache.delete(baseFilename);
+}
+
+function warmCache() {
+    try {
+        const files = fs.readdirSync(THUMBNAIL_DIR);
+        for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if (ext !== '.png' && ext !== '.jpg') continue;
+            const baseFilename = path.basename(file, ext);
+            const filePath = path.join(THUMBNAIL_DIR, file);
+            const mtime = Math.floor(fs.statSync(filePath).mtimeMs);
+            setCacheEntry(baseFilename, `/thumbnails/${file}?v=${mtime}`);
+        }
+        console.log(`[Thumbnail Cache] Warmed with ${thumbnailCache.size} entries`);
+    } catch (err) {
+        console.error('[Thumbnail Cache] Warm failed:', err.message);
+    }
+}
+
+// Warm cache on startup
+warmCache();
+
 /**
  * Check if a failed thumbnail can be retried
  */
@@ -61,7 +95,7 @@ function canRetryThumbnail(filename) {
  */
 async function generateThumbnailAttempt(videoUrl, outputFilename, attemptNum) {
     const outputPath = path.join(THUMBNAIL_DIR, outputFilename);
-    const publicPath = `/thumbnails/${outputFilename}`;
+    const baseFilename = path.basename(outputFilename, path.extname(outputFilename));
 
     return new Promise((resolve, reject) => {
         console.log(`[Thumbnail] Attempt ${attemptNum}/${config.THUMBNAIL.MAX_RETRY_ATTEMPTS} for: ${outputFilename}`);
@@ -72,7 +106,10 @@ async function generateThumbnailAttempt(videoUrl, outputFilename, attemptNum) {
             })
             .on('end', () => {
                 console.log(`[Thumbnail] Successfully generated: ${outputFilename}`);
-                resolve(publicPath);
+                const mtime = Math.floor(fs.statSync(outputPath).mtimeMs);
+                const url = `/thumbnails/${outputFilename}?v=${mtime}`;
+                setCacheEntry(baseFilename, url);
+                resolve(url);
             })
             .on('error', (err) => {
                 console.error(`[Thumbnail] Attempt ${attemptNum} failed for ${outputFilename}:`, err.message);
@@ -215,22 +252,33 @@ function clearFailed(filename = null) {
 }
 
 /**
- * Check if thumbnail exists for a filename (with cache-busting via mtime)
+ * Check if thumbnail exists for a filename.
+ * Uses in-memory cache (60s TTL) to avoid blocking fs calls on every request.
  */
 function exists(filename) {
     const baseFilename = getBaseFilename(filename);
+
+    // Check cache first
+    const cached = thumbnailCache.get(baseFilename);
+    if (cached && (Date.now() - cached.cachedAt) < CACHE_TTL_MS) {
+        return cached.url;
+    }
+
+    // Cache miss — check disk (only happens once per 60s per file)
     const pngPath = path.join(THUMBNAIL_DIR, `${baseFilename}.png`);
     const jpgPath = path.join(THUMBNAIL_DIR, `${baseFilename}.jpg`);
 
     if (fs.existsSync(pngPath)) {
-        const stats = fs.statSync(pngPath);
-        const mtime = Math.floor(stats.mtimeMs);
-        return `/thumbnails/${baseFilename}.png?v=${mtime}`;
+        const mtime = Math.floor(fs.statSync(pngPath).mtimeMs);
+        const url = `/thumbnails/${baseFilename}.png?v=${mtime}`;
+        setCacheEntry(baseFilename, url);
+        return url;
     }
     if (fs.existsSync(jpgPath)) {
-        const stats = fs.statSync(jpgPath);
-        const mtime = Math.floor(stats.mtimeMs);
-        return `/thumbnails/${baseFilename}.jpg?v=${mtime}`;
+        const mtime = Math.floor(fs.statSync(jpgPath).mtimeMs);
+        const url = `/thumbnails/${baseFilename}.jpg?v=${mtime}`;
+        setCacheEntry(baseFilename, url);
+        return url;
     }
     return null;
 }
@@ -250,11 +298,13 @@ function deleteThumbnail(filename) {
 
     if (fs.existsSync(pngPath)) {
         fs.unlinkSync(pngPath);
+        thumbnailCache.delete(baseFilename);
         console.log(`[Thumbnail] Deleted: ${baseFilename}.png`);
         return { deleted: true, path: pngPath };
     }
     if (fs.existsSync(jpgPath)) {
         fs.unlinkSync(jpgPath);
+        thumbnailCache.delete(baseFilename);
         console.log(`[Thumbnail] Deleted: ${baseFilename}.jpg`);
         return { deleted: true, path: jpgPath };
     }
@@ -278,7 +328,9 @@ function saveCustomThumbnail(filename, buffer, mimeType) {
     fs.writeFileSync(outputPath, buffer);
     console.log(`[Thumbnail] Custom thumbnail saved: ${baseFilename}.${ext}`);
     const stats = fs.statSync(outputPath);
-    return `/thumbnails/${baseFilename}.${ext}?v=${Math.floor(stats.mtimeMs)}`;
+    const url = `/thumbnails/${baseFilename}.${ext}?v=${Math.floor(stats.mtimeMs)}`;
+    setCacheEntry(baseFilename, url);
+    return url;
 }
 
 /**
@@ -310,7 +362,9 @@ async function generateAtTimestamp(videoKey, filename, timestampSeconds) {
                 .on('end', () => {
                     console.log(`[Thumbnail] Generated at ${timestampSeconds}s: ${outputFilename}`);
                     const stats = fs.statSync(outputPath);
-                    resolve(`/thumbnails/${outputFilename}?v=${Math.floor(stats.mtimeMs)}`);
+                    const url = `/thumbnails/${outputFilename}?v=${Math.floor(stats.mtimeMs)}`;
+                    setCacheEntry(baseFilename, url);
+                    resolve(url);
                 })
                 .on('error', (err) => {
                     console.error(`[Thumbnail] Failed at ${timestampSeconds}s for ${outputFilename}:`, err.message);
