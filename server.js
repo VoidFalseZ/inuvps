@@ -72,11 +72,21 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 
 // --- Static Files ---
+// Thumbnails: no-cache so ?v=mtime query string works for cache-busting
 app.use('/thumbnails', express.static(path.join(process.cwd(), 'cache', 'thumbnails'), {
-    maxAge: '7d',
-    immutable: true
+    etag: true,
+    lastModified: true,
+    setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
 }));
 app.use('/chat_uploads', express.static(chatService.CHAT_UPLOADS_DIR, { maxAge: '7d' }));
+
+// API responses must not be cached so clients always get fresh data (e.g. updated thumbnail URLs)
+app.use('/api/', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+});
 
 // --- Mount All Routes ---
 mountRoutes(app);
