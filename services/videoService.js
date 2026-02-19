@@ -10,7 +10,9 @@ const { formatDateTime } = require('../utils/helpers');
 /**
  * Get detailed information for a video file
  */
-async function getVideoDetails(videoFile, metadata = null) {
+async function getVideoDetails(videoFile, metadata = null, options = {}) {
+    const { skipUrl = false } = options;
+
     if (!metadata) {
         metadata = metadataService.loadMetadata();
     }
@@ -45,13 +47,16 @@ async function getVideoDetails(videoFile, metadata = null) {
         metadataService.saveMetadata(metadata);
     }
 
-    const videoUrl = await r2Service.getSignedVideoUrl(key);
+    let videoUrl = null;
+    if (!skipUrl) {
+        videoUrl = await r2Service.getSignedVideoUrl(key);
+    }
 
     // Check for existing thumbnails
     let thumbnailUrl = thumbnailService.exists(filename);
 
-    // Lazy thumbnail generation if not exists
-    if (!thumbnailUrl) {
+    // Lazy thumbnail generation if not exists (only if we are not skipping heavy ops)
+    if (!thumbnailUrl && !skipUrl) {
         const baseFilename = getBaseFilename(filename);
         thumbnailService.generateThumbnail(key, `${baseFilename}.png`).then(generatedUrl => {
             if (generatedUrl) {
@@ -75,19 +80,24 @@ async function getVideoDetails(videoFile, metadata = null) {
 }
 
 /**
- * Get all videos with optional series filter
+ * Get all videos with optional filters
  */
-async function getAllVideos(seriesFilter = null) {
+async function getAllVideos(options = {}) {
+    const { series_title: seriesFilter, skipUrl = false } = options;
+
+    // Backward compatibility for string argument
+    const filter = typeof options === 'string' ? options : seriesFilter;
+
     const metadata = metadataService.loadMetadata();
     const videoFiles = await r2Service.listVideos();
 
     let allVideosData = (await Promise.all(
-        videoFiles.map(file => getVideoDetails(file, metadata))
+        videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl }))
     )).filter(Boolean);
 
-    if (seriesFilter) {
+    if (filter) {
         allVideosData = allVideosData.filter(v =>
-            v.series_title && v.series_title.toLowerCase() === seriesFilter.toLowerCase()
+            v.series_title && v.series_title.toLowerCase() === filter.toLowerCase()
         );
         // Sort by episode number for series view
         allVideosData.sort((a, b) => {
@@ -104,15 +114,64 @@ async function getAllVideos(seriesFilter = null) {
 }
 
 /**
- * Get series list with aggregated info
+ * Get paginated videos
  */
-async function getSeriesList() {
+async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
     const metadata = metadataService.loadMetadata();
     const videoFiles = await r2Service.listVideos();
 
-    const allVideoDetails = (await Promise.all(
-        videoFiles.map(file => getVideoDetails(file, metadata))
+    // 1. First, get lightweight details (no signed URLs) for ALL videos to filter/sort
+    let allVideos = (await Promise.all(
+        videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl: true }))
     )).filter(Boolean);
+
+    // 2. Filter
+    if (seriesFilter) {
+        allVideos = allVideos.filter(v =>
+            v.series_title && v.series_title.toLowerCase() === seriesFilter.toLowerCase()
+        );
+        // Sort by episode for series
+        allVideos.sort((a, b) => {
+            const epA = a.episode_number !== null ? a.episode_number : Infinity;
+            const epB = b.episode_number !== null ? b.episode_number : Infinity;
+            return epA !== epB ? epA - epB : a.filename.localeCompare(b.filename);
+        });
+    } else {
+        // Sort by date for main list
+        allVideos.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+    }
+
+    // 3. Paginate
+    const total = allVideos.length;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    const paginatedItems = allVideos.slice(startIndex, endIndex);
+
+    // 4. Hydrate only the page items with signed URLs
+    const hydratedItems = await Promise.all(
+        paginatedItems.map(async (v) => {
+            const file = videoFiles.find(f => f.filename === v.filename);
+            return getVideoDetails(file, metadata, { skipUrl: false });
+        })
+    );
+
+    return {
+        data: hydratedItems,
+        pagination: {
+            current_page: Number(page),
+            total_pages: Math.ceil(total / limit),
+            total_items: total,
+            items_per_page: Number(limit)
+        }
+    };
+}
+
+/**
+ * Get series list with aggregated info
+ */
+async function getSeriesList() {
+    // Use getAllVideos with skipUrl: true for performance
+    const allVideoDetails = await getAllVideos({ skipUrl: true });
 
     const seriesInfo = new Map();
 
@@ -164,20 +223,28 @@ async function getSeriesList() {
  */
 async function searchVideos(query) {
     const searchQuery = (query || '').toLowerCase();
-    const metadata = metadataService.loadMetadata();
-    const videoFiles = await r2Service.listVideos();
 
-    const allVideoDetails = (await Promise.all(
-        videoFiles.map(file => getVideoDetails(file, metadata))
-    )).filter(Boolean);
+    // Get lightweight list first
+    const allVideos = await getAllVideos({ skipUrl: true });
 
-    const filteredVideos = allVideoDetails.filter(video => {
+    const filteredVideos = allVideos.filter(video => {
         const searchText = `${video.filename} ${video.display_title} ${video.series_title} ${video.description}`.toLowerCase();
         return searchText.includes(searchQuery);
     });
 
-    filteredVideos.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
-    return filteredVideos;
+    // Hydrate results (up to 50 to prevent overload)
+    const metadata = metadataService.loadMetadata();
+    const videoFiles = await r2Service.listVideos();
+
+    const hydratedResults = await Promise.all(
+        filteredVideos.slice(0, 50).map(async (v) => {
+            const file = videoFiles.find(f => f.filename === v.filename);
+            return getVideoDetails(file, metadata, { skipUrl: false });
+        })
+    );
+
+    hydratedResults.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+    return hydratedResults;
 }
 
 /**
@@ -191,6 +258,7 @@ async function findByFilename(filename) {
 module.exports = {
     getVideoDetails,
     getAllVideos,
+    getPaginatedVideos,
     getSeriesList,
     searchVideos,
     findByFilename

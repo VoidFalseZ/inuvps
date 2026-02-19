@@ -51,9 +51,18 @@ router.get('/', async (req, res) => {
 
 // Get all videos API
 router.get('/api/videos', async (req, res) => {
-    const { series_title } = req.query;
-    const videos = await videoService.getAllVideos(series_title);
-    res.json(videos);
+    const { series_title, page, limit } = req.query;
+
+    if (page && limit) {
+        const result = await videoService.getPaginatedVideos(page, limit, series_title);
+        res.json(result);
+    } else {
+        // Fallback to legacy structure (array) but optimize internally if possible
+        // Passing series_title as object property to support new signature
+        const options = series_title ? { series_title } : {};
+        const videos = await videoService.getAllVideos(options);
+        res.json(videos);
+    }
 });
 
 // Get all series
