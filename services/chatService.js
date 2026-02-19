@@ -157,5 +157,6 @@ module.exports = {
     broadcastMessage,
     pruneOldMessages,
     initSocketHandlers,
+    getIo: () => ioInstance,
     CHAT_UPLOADS_DIR
 };

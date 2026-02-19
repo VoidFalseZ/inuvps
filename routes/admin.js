@@ -81,6 +81,8 @@ router.post('/thumbnails/upload', upload.single('thumbnail'), (req, res) => {
         );
 
         console.log('[Admin] Upload successful:', thumbnailPath);
+        // Notify all clients to refresh thumbnails
+        chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: thumbnailPath });
         res.json({
             success: true,
             message: 'Custom thumbnail saved for: ' + filename,
@@ -126,6 +128,8 @@ router.post('/thumbnails/regenerate-at', async (req, res) => {
         console.log('[Admin] Generation result:', thumbnailPath);
 
         if (thumbnailPath) {
+            // Notify all clients to refresh thumbnails
+            chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: thumbnailPath });
             res.json({
                 success: true,
                 message: 'Thumbnail regenerated at ' + timestamp + 's for: ' + filename,
@@ -158,6 +162,8 @@ router.post('/thumbnails/delete', (req, res) => {
         console.log('[Admin] Delete result:', result);
 
         if (result.deleted) {
+            // Notify all clients to refresh thumbnails
+            chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: null });
             res.json({ success: true, message: 'Thumbnail deleted for: ' + filename });
         } else {
             res.status(404).json({ success: false, error: 'No thumbnail found for: ' + filename });
