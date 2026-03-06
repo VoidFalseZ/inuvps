@@ -1,4 +1,4 @@
-// routes/videos.js - Video streaming and listing routes
+// routes/videos.js - Video streaming and listing routes with HTTP caching
 
 const express = require('express');
 const router = express.Router();
@@ -7,7 +7,26 @@ const config = require('../config');
 const r2Service = require('../services/r2Service');
 const videoService = require('../services/videoService');
 
-// Home page with video list
+// ─── Helper: Set Cache-Control and handle ETag/304 ───────────────────────────
+
+function setCacheHeaders(res, maxAge = config.API_CACHE_MAX_AGE) {
+    res.set('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`);
+    res.set('Vary', 'Accept-Encoding');
+}
+
+function handleETag(req, res, data) {
+    const etag = videoService.getCacheETag('light');
+    if (etag) {
+        res.set('ETag', etag);
+        if (req.headers['if-none-match'] === etag) {
+            return res.status(304).end();
+        }
+    }
+    return null; // Not a 304, caller should send data
+}
+
+// ─── Home page ───────────────────────────────────────────────────────────────
+
 router.get('/', async (req, res) => {
     const videoFiles = await r2Service.listVideos();
 
@@ -49,36 +68,70 @@ router.get('/', async (req, res) => {
     `);
 });
 
-// Get all videos API
+// ─── API: Get all videos ─────────────────────────────────────────────────────
+
 router.get('/api/videos', async (req, res) => {
     const { series_title, page, limit } = req.query;
 
+    setCacheHeaders(res);
+
     if (page && limit) {
         const result = await videoService.getPaginatedVideos(page, limit, series_title);
+
+        // ETag check for paginated responses
+        const etag = videoService.getCacheETag('light');
+        if (etag) {
+            const pageEtag = `"${etag.replace(/"/g, '')}-p${page}-l${limit}"`;
+            res.set('ETag', pageEtag);
+            if (req.headers['if-none-match'] === pageEtag) {
+                return res.status(304).end();
+            }
+        }
+
         res.json(result);
     } else {
-        // Fallback to legacy structure (array) but optimize internally if possible
-        // Passing series_title as object property to support new signature
         const options = series_title ? { series_title } : {};
         const videos = await videoService.getAllVideos(options);
+
+        // ETag check
+        const notModified = handleETag(req, res, videos);
+        if (notModified) return;
+
         res.json(videos);
     }
 });
 
-// Get all series
+// ─── API: Get all series ─────────────────────────────────────────────────────
+
 router.get('/api/series', async (req, res) => {
+    setCacheHeaders(res);
+
     const series = await videoService.getSeriesList();
+
+    // ETag check
+    const etag = videoService.getCacheETag('series');
+    if (etag) {
+        res.set('ETag', etag);
+        if (req.headers['if-none-match'] === etag) {
+            return res.status(304).end();
+        }
+    }
+
     res.json(series);
 });
 
-// Get videos by series title
+// ─── API: Get videos by series title ─────────────────────────────────────────
+
 router.get('/api/series/:series_title', async (req, res) => {
+    setCacheHeaders(res);
+
     const { series_title } = req.params;
     const videos = await videoService.getAllVideos(series_title);
     res.json(videos);
 });
 
-// Search videos
+// ─── API: Search videos ──────────────────────────────────────────────────────
+
 router.get('/api/search',
     query('q').optional().isString().trim().escape(),
     async (req, res, next) => {
@@ -88,6 +141,9 @@ router.get('/api/search',
                 return res.status(400).json({ errors: errors.array() });
             }
 
+            // Shorter cache for search results
+            setCacheHeaders(res, 60);
+
             const videos = await videoService.searchVideos(req.query.q);
             res.json(videos);
         } catch (error) {
@@ -96,7 +152,8 @@ router.get('/api/search',
     }
 );
 
-// Stream video by filename
+// ─── Video streaming ─────────────────────────────────────────────────────────
+
 router.get('/video/:filename', async (req, res) => {
     const { filename } = req.params;
     const videoFile = await videoService.findByFilename(filename);
@@ -105,8 +162,10 @@ router.get('/video/:filename', async (req, res) => {
         return res.status(404).send('File not found');
     }
 
-    // Redirect to public URL if configured
+    // Redirect to public URL if configured (CDN handles caching)
     if (config.R2.PUBLIC_URL) {
+        // Set long cache for redirect itself
+        res.set('Cache-Control', 'public, max-age=3600');
         return res.redirect(`${config.R2.PUBLIC_URL}/${videoFile.key}`);
     }
 
@@ -134,6 +193,7 @@ router.get('/video/:filename', async (req, res) => {
                 'Accept-Ranges': 'bytes',
                 'Content-Length': chunksize,
                 'Content-Type': 'video/mp4',
+                'Cache-Control': 'public, max-age=86400',
             });
 
             const rangeResponse = await r2Service.getObject(videoFile.key, `bytes=${start}-${end}`);
@@ -142,6 +202,8 @@ router.get('/video/:filename', async (req, res) => {
             res.writeHead(200, {
                 'Content-Length': contentLength,
                 'Content-Type': 'video/mp4',
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=86400',
             });
             const response = await r2Service.getObject(videoFile.key);
             response.Body.pipe(res);

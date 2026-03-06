@@ -1,11 +1,49 @@
-// services/videoService.js - Video details and processing
+// services/videoService.js - Video details and processing with in-memory caching
 
 const path = require('path');
+const crypto = require('crypto');
 const r2Service = require('./r2Service');
 const metadataService = require('./metadataService');
 const thumbnailService = require('./thumbnailService');
 const { extractTitleAndEpisode, getBaseFilename } = require('../utils/fileParser');
 const { formatDateTime } = require('../utils/helpers');
+const config = require('../config');
+
+// ─── In-Memory Video Details Cache ───────────────────────────────────────────
+// This is the critical performance optimization. Instead of rebuilding video
+// details on every API request (which involves N thumbnail checks + N URL
+// generations), we cache the fully-built result for VIDEO_DETAILS_CACHE_TTL_MS.
+
+const detailsCache = {
+    // Full video list (with URLs) - key: 'all', value: { data, timestamp, etag }
+    full: null,
+    // Lightweight list (no URLs) - key: 'light', value: { data, timestamp, etag }
+    light: null,
+    // Series list - key: 'series', value: { data, timestamp, etag }
+    series: null,
+};
+
+function isCacheValid(entry) {
+    return entry && entry.data && (Date.now() - entry.timestamp) < config.VIDEO_DETAILS_CACHE_TTL_MS;
+}
+
+function generateETag(data) {
+    const hash = crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
+    return `"${hash}"`;
+}
+
+/**
+ * Invalidate all video details caches.
+ * Call this when metadata/thumbnails are updated by admin.
+ */
+function invalidateDetailsCache() {
+    detailsCache.full = null;
+    detailsCache.light = null;
+    detailsCache.series = null;
+    console.log('[VideoService] Details cache invalidated');
+}
+
+// ─── Video Detail Builder ────────────────────────────────────────────────────
 
 /**
  * Get detailed information for a video file
@@ -79,8 +117,11 @@ async function getVideoDetails(videoFile, metadata = null, options = {}) {
     };
 }
 
+// ─── Cached Data Fetchers ────────────────────────────────────────────────────
+
 /**
- * Get all videos with optional filters
+ * Get all videos - with in-memory caching for the lightweight version.
+ * The full list (with URLs) is also cached separately.
  */
 async function getAllVideos(options = {}) {
     const { series_title: seriesFilter, skipUrl = false } = options;
@@ -88,42 +129,61 @@ async function getAllVideos(options = {}) {
     // Backward compatibility for string argument
     const filter = typeof options === 'string' ? options : seriesFilter;
 
-    const metadata = metadataService.loadMetadata();
-    const videoFiles = await r2Service.listVideos();
+    // Try to use cached data for the base list
+    const cacheKey = skipUrl ? 'light' : 'full';
 
-    let allVideosData = (await Promise.all(
-        videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl }))
-    )).filter(Boolean);
+    let allVideosData;
+
+    if (isCacheValid(detailsCache[cacheKey]) && !filter) {
+        // Return cached data directly for unfiltered requests
+        allVideosData = detailsCache[cacheKey].data;
+    } else if (isCacheValid(detailsCache.light) && filter) {
+        // For filtered requests, use the cached light list to filter
+        allVideosData = detailsCache.light.data;
+    } else {
+        // Cache miss - rebuild
+        const metadata = metadataService.loadMetadata();
+        const videoFiles = await r2Service.listVideos();
+
+        allVideosData = (await Promise.all(
+            videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl }))
+        )).filter(Boolean);
+
+        // Sort by last_modified for the cached version (general order)
+        allVideosData.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+
+        // Cache the result
+        detailsCache[cacheKey] = {
+            data: allVideosData,
+            timestamp: Date.now(),
+            etag: generateETag(allVideosData)
+        };
+
+        console.log(`[VideoService] Built and cached ${cacheKey} list: ${allVideosData.length} videos`);
+    }
 
     if (filter) {
-        allVideosData = allVideosData.filter(v =>
+        let filtered = allVideosData.filter(v =>
             v.series_title && v.series_title.toLowerCase() === filter.toLowerCase()
         );
         // Sort by episode number for series view
-        allVideosData.sort((a, b) => {
+        filtered.sort((a, b) => {
             const epA = a.episode_number !== null ? a.episode_number : Infinity;
             const epB = b.episode_number !== null ? b.episode_number : Infinity;
             return epA !== epB ? epA - epB : a.filename.localeCompare(b.filename);
         });
-    } else {
-        // Sort by last_modified for general list
-        allVideosData.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+        return filtered;
     }
 
     return allVideosData;
 }
 
 /**
- * Get paginated videos
+ * Get paginated videos - uses lightweight cache for filter/sort, then hydrates page
  */
 async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
-    const metadata = metadataService.loadMetadata();
-    const videoFiles = await r2Service.listVideos();
-
-    // 1. First, get lightweight details (no signed URLs) for ALL videos to filter/sort
-    let allVideos = (await Promise.all(
-        videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl: true }))
-    )).filter(Boolean);
+    // 1. Get lightweight details from cache for ALL videos to filter/sort
+    let allVideos = await getAllVideos({ skipUrl: true });
 
     // 2. Filter
     if (seriesFilter) {
@@ -136,10 +196,8 @@ async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
             const epB = b.episode_number !== null ? b.episode_number : Infinity;
             return epA !== epB ? epA - epB : a.filename.localeCompare(b.filename);
         });
-    } else {
-        // Sort by date for main list
-        allVideos.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
     }
+    // Note: allVideos already sorted by last_modified from cache
 
     // 3. Paginate
     const total = allVideos.length;
@@ -148,6 +206,9 @@ async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
     const paginatedItems = allVideos.slice(startIndex, endIndex);
 
     // 4. Hydrate only the page items with signed URLs
+    const metadata = metadataService.loadMetadata();
+    const videoFiles = await r2Service.listVideos();
+
     const hydratedItems = await Promise.all(
         paginatedItems.map(async (v) => {
             const file = videoFiles.find(f => f.filename === v.filename);
@@ -167,10 +228,15 @@ async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
 }
 
 /**
- * Get series list with aggregated info
+ * Get series list with aggregated info - cached
  */
 async function getSeriesList() {
-    // Use getAllVideos with skipUrl: true for performance
+    // Check series cache
+    if (isCacheValid(detailsCache.series)) {
+        return detailsCache.series.data;
+    }
+
+    // Use getAllVideos with skipUrl: true for performance (leverages its own cache)
     const allVideoDetails = await getAllVideos({ skipUrl: true });
 
     const seriesInfo = new Map();
@@ -215,16 +281,24 @@ async function getSeriesList() {
 
     result.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
 
+    // Cache the result
+    detailsCache.series = {
+        data: result,
+        timestamp: Date.now(),
+        etag: generateETag(result)
+    };
+
+    console.log(`[VideoService] Built and cached series list: ${result.length} series`);
     return result;
 }
 
 /**
- * Search videos by query
+ * Search videos by query - uses cached light list
  */
 async function searchVideos(query) {
     const searchQuery = (query || '').toLowerCase();
 
-    // Get lightweight list first
+    // Get lightweight list from cache
     const allVideos = await getAllVideos({ skipUrl: true });
 
     const filteredVideos = allVideos.filter(video => {
@@ -255,11 +329,24 @@ async function findByFilename(filename) {
     return videoFiles.find(f => f.filename === filename);
 }
 
+/**
+ * Get the ETag for a cache entry (for HTTP 304 support)
+ */
+function getCacheETag(cacheKey) {
+    const entry = detailsCache[cacheKey];
+    if (entry && entry.etag) {
+        return entry.etag;
+    }
+    return null;
+}
+
 module.exports = {
     getVideoDetails,
     getAllVideos,
     getPaginatedVideos,
     getSeriesList,
     searchVideos,
-    findByFilename
+    findByFilename,
+    invalidateDetailsCache,
+    getCacheETag
 };

@@ -81,6 +81,8 @@ router.post('/thumbnails/upload', upload.single('thumbnail'), (req, res) => {
         );
 
         console.log('[Admin] Upload successful:', thumbnailPath);
+        // Invalidate video details cache so new thumbnail shows immediately
+        videoService.invalidateDetailsCache();
         // Notify all clients to refresh thumbnails
         chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: thumbnailPath });
         res.json({
@@ -128,6 +130,8 @@ router.post('/thumbnails/regenerate-at', async (req, res) => {
         console.log('[Admin] Generation result:', thumbnailPath);
 
         if (thumbnailPath) {
+            // Invalidate video details cache so new thumbnail shows immediately
+            videoService.invalidateDetailsCache();
             // Notify all clients to refresh thumbnails
             chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: thumbnailPath });
             res.json({
@@ -162,6 +166,8 @@ router.post('/thumbnails/delete', (req, res) => {
         console.log('[Admin] Delete result:', result);
 
         if (result.deleted) {
+            // Invalidate video details cache
+            videoService.invalidateDetailsCache();
             // Notify all clients to refresh thumbnails
             chatService.getIo()?.emit('thumbnail_updated', { filename, thumbnail_url: null });
             res.json({ success: true, message: 'Thumbnail deleted for: ' + filename });

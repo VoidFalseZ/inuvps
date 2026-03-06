@@ -42,7 +42,13 @@ module.exports = {
     },
 
     // R2 Cache TTL
-    R2_CACHE_TTL_MS: 60 * 1000,                  // 60 seconds
+    R2_CACHE_TTL_MS: 5 * 60 * 1000,              // 5 minutes
+
+    // Video details cache TTL
+    VIDEO_DETAILS_CACHE_TTL_MS: 5 * 60 * 1000,   // 5 minutes
+
+    // HTTP Cache-Control max-age for API responses (seconds)
+    API_CACHE_MAX_AGE: 120,                      // 2 minutes
 
     // Rate Limiting
     RATE_LIMIT: {

@@ -34,14 +34,30 @@ async function listVideos(forceRefresh = false) {
         return cache.videos;
     }
 
-    const command = new ListObjectsV2Command({
-        Bucket: config.R2.BUCKET_NAME,
-        Prefix: '',
-    });
-
     try {
-        const response = await s3Client.send(command);
-        const videoFiles = (response.Contents || [])
+        let isTruncated = true;
+        let continuationToken = undefined;
+        const allContents = [];
+
+        // Paginate through all objects (S3 returns max 1000 per request)
+        while (isTruncated) {
+            const command = new ListObjectsV2Command({
+                Bucket: config.R2.BUCKET_NAME,
+                Prefix: '',
+                ContinuationToken: continuationToken,
+            });
+
+            const response = await s3Client.send(command);
+
+            if (response.Contents) {
+                allContents.push(...response.Contents);
+            }
+
+            isTruncated = response.IsTruncated;
+            continuationToken = response.NextContinuationToken;
+        }
+
+        const videoFiles = allContents
             .filter(item => item.Key.endsWith('.mp4'))
             .map(item => ({
                 filename: path.basename(item.Key),
@@ -53,7 +69,7 @@ async function listVideos(forceRefresh = false) {
         // Update cache
         cache.videos = videoFiles;
         cache.lastFetched = now;
-        console.log(`[R2 Cache] Refreshed video list: ${videoFiles.length} videos`);
+        console.log(`[R2 Cache] Refreshed video list: ${videoFiles.length} videos (TTL: ${config.R2_CACHE_TTL_MS / 1000}s)`);
 
         return videoFiles;
     } catch (error) {
@@ -64,6 +80,19 @@ async function listVideos(forceRefresh = false) {
             return cache.videos;
         }
         return [];
+    }
+}
+
+/**
+ * Warm the video list cache on startup
+ */
+async function warmCache() {
+    try {
+        console.log('[R2 Cache] Warming cache on startup...');
+        await listVideos(true);
+        console.log('[R2 Cache] Cache warmed successfully');
+    } catch (error) {
+        console.error('[R2 Cache] Failed to warm cache:', error.message);
     }
 }
 
@@ -139,5 +168,6 @@ module.exports = {
     getSignedVideoUrl,
     getObject,
     headObject,
-    invalidateCache
+    invalidateCache,
+    warmCache
 };
