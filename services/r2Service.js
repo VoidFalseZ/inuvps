@@ -1,7 +1,7 @@
 // services/r2Service.js - Cloudflare R2 storage operations
 
 const path = require('path');
-const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, ListObjectsV2Command, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
 
@@ -81,6 +81,8 @@ async function getSignedVideoUrl(key, expiresIn = 3600) {
     const command = new GetObjectCommand({
         Bucket: config.R2.BUCKET_NAME,
         Key: key,
+        // Tell R2 to include Cache-Control to allow CDN/browser caching
+        ResponseCacheControl: 'public, max-age=86400',
     });
 
     try {
@@ -111,6 +113,19 @@ async function getObject(key, range = null) {
 }
 
 /**
+ * Get an object's metadata from R2 without downloading the body
+ * @param {string} key - R2 object key
+ * @returns {Promise<Object>} S3 response object with metadata
+ */
+async function headObject(key) {
+    const params = {
+        Bucket: config.R2.BUCKET_NAME,
+        Key: key,
+    };
+    return s3Client.send(new HeadObjectCommand(params));
+}
+
+/**
  * Invalidate the video list cache
  */
 function invalidateCache() {
@@ -123,5 +138,6 @@ module.exports = {
     listVideos,
     getSignedVideoUrl,
     getObject,
+    headObject,
     invalidateCache
 };

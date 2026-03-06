@@ -111,8 +111,8 @@ router.get('/video/:filename', async (req, res) => {
     }
 
     try {
-        const response = await r2Service.getObject(videoFile.key);
-        const contentLength = response.ContentLength;
+        const metadata = await r2Service.headObject(videoFile.key);
+        const contentLength = metadata.ContentLength;
         const range = req.headers.range;
 
         // Disable compression for video streaming
@@ -121,7 +121,12 @@ router.get('/video/:filename', async (req, res) => {
         if (range) {
             const parts = range.replace(/bytes=/, "").split("-");
             const start = parseInt(parts[0], 10);
-            const end = parts[1] ? parseInt(parts[1], 10) : contentLength - 1;
+
+            // Limit chunk size to 2MB (network engineering best practice for mobile networks)
+            const MAX_CHUNK_SIZE = 2 * 1024 * 1024;
+            const requestedEnd = parts[1] ? parseInt(parts[1], 10) : contentLength - 1;
+            const end = Math.min(start + MAX_CHUNK_SIZE - 1, requestedEnd, contentLength - 1);
+
             const chunksize = (end - start) + 1;
 
             res.writeHead(206, {
@@ -138,6 +143,7 @@ router.get('/video/:filename', async (req, res) => {
                 'Content-Length': contentLength,
                 'Content-Type': 'video/mp4',
             });
+            const response = await r2Service.getObject(videoFile.key);
             response.Body.pipe(res);
         }
     } catch (error) {
