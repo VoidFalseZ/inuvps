@@ -43,6 +43,104 @@ function invalidateDetailsCache() {
     console.log('[VideoService] Details cache invalidated');
 }
 
+/**
+ * Background cache refresh — keeps caches warm even with zero traffic.
+ * This prevents cold-start delays after overnight inactivity.
+ */
+async function refreshCacheInBackground() {
+    try {
+        const start = Date.now();
+        console.log('[VideoService] Background cache refresh starting...');
+
+        // Force-refresh R2 list first
+        await r2Service.listVideos(true);
+
+        // Rebuild light cache (no URLs — fast)
+        const metadata = metadataService.loadMetadata();
+        const videoFiles = await r2Service.listVideos();
+
+        const lightData = (await Promise.all(
+            videoFiles.map(file => getVideoDetails(file, metadata, { skipUrl: true }))
+        )).filter(Boolean);
+
+        lightData.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+
+        detailsCache.light = {
+            data: lightData,
+            timestamp: Date.now(),
+            etag: generateETag(lightData)
+        };
+
+        // Also rebuild series cache from the light data
+        const seriesInfo = new Map();
+        for (const video of lightData) {
+            if (video && video.series_title) {
+                const { series_title, last_modified, description, thumbnail_url, episode_number } = video;
+                if (!seriesInfo.has(series_title)) {
+                    seriesInfo.set(series_title, {
+                        count: 0, last_modified: '1970-01-01 00:00:00',
+                        description: 'No description available.',
+                        thumbnail_url: null, first_episode: Infinity
+                    });
+                }
+                const cur = seriesInfo.get(series_title);
+                cur.count++;
+                const epNum = episode_number !== null ? episode_number : Infinity;
+                if (epNum < cur.first_episode && thumbnail_url) {
+                    cur.thumbnail_url = thumbnail_url;
+                    cur.first_episode = epNum;
+                }
+                if (new Date(last_modified) > new Date(cur.last_modified)) {
+                    cur.last_modified = last_modified;
+                    cur.description = description;
+                }
+            }
+        }
+
+        const seriesResult = Array.from(seriesInfo.entries()).map(([title, info]) => ({
+            series_title: title,
+            video_count: info.count,
+            thumbnail_url: info.thumbnail_url,
+            last_modified: info.last_modified,
+            description: info.description
+        }));
+        seriesResult.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
+
+        detailsCache.series = {
+            data: seriesResult,
+            timestamp: Date.now(),
+            etag: generateETag(seriesResult)
+        };
+
+        const elapsed = Date.now() - start;
+        console.log(`[VideoService] Background cache refresh done: ${lightData.length} videos, ${seriesResult.length} series in ${elapsed}ms`);
+    } catch (error) {
+        console.error('[VideoService] Background cache refresh failed:', error.message);
+    }
+}
+
+/**
+ * Warm up the video details cache on server startup.
+ * Called once from server.js to ensure first request is fast.
+ */
+async function warmVideoDetailsCache() {
+    console.log('[VideoService] Warming video details cache...');
+    await refreshCacheInBackground();
+    console.log('[VideoService] Video details cache warmed successfully');
+}
+
+/**
+ * Start periodic background cache refresh.
+ * Call once from server.js after startup.
+ * @param {number} intervalMs - Refresh interval (default: 4 minutes)
+ */
+function startBackgroundRefresh(intervalMs = 4 * 60 * 1000) {
+    setInterval(() => {
+        refreshCacheInBackground();
+    }, intervalMs);
+    console.log(`[VideoService] Background cache refresh scheduled every ${intervalMs / 1000}s`);
+}
+
 // ─── Video Detail Builder ────────────────────────────────────────────────────
 
 /**
@@ -348,5 +446,7 @@ module.exports = {
     searchVideos,
     findByFilename,
     invalidateDetailsCache,
-    getCacheETag
+    getCacheETag,
+    warmVideoDetailsCache,
+    startBackgroundRefresh
 };

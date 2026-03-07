@@ -19,6 +19,7 @@ const chatService = require('./services/chatService');
 const sessionService = require('./services/sessionService');
 const thumbnailService = require('./services/thumbnailService');
 const r2Service = require('./services/r2Service');
+const videoService = require('./services/videoService');
 
 // ─── Express App ─────────────────────────────────────────────────────────────
 
@@ -122,6 +123,12 @@ async function startServer() {
 
     // Warm R2 video list cache
     await r2Service.warmCache();
+
+    // Warm video details + series cache (so first request is instant)
+    await videoService.warmVideoDetailsCache();
+
+    // Start background cache refresh every 4 minutes (keeps caches hot 24/7)
+    videoService.startBackgroundRefresh();
 
     // Start auto-generating missing thumbnails (background)
     thumbnailService.autoGenerateMissing();
