@@ -304,12 +304,15 @@ async function getPaginatedVideos(page = 1, limit = 20, seriesFilter = null) {
     const paginatedItems = allVideos.slice(startIndex, endIndex);
 
     // 4. Hydrate only the page items with signed URLs
+    //    listVideos() uses its own cache, so this is cheap (single call)
     const metadata = metadataService.loadMetadata();
     const videoFiles = await r2Service.listVideos();
+    // Build a fast lookup map to avoid repeated .find() calls
+    const videoFileMap = new Map(videoFiles.map(f => [f.filename, f]));
 
     const hydratedItems = await Promise.all(
         paginatedItems.map(async (v) => {
-            const file = videoFiles.find(f => f.filename === v.filename);
+            const file = videoFileMap.get(v.filename);
             return getVideoDetails(file, metadata, { skipUrl: false });
         })
     );

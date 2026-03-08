@@ -157,6 +157,11 @@ async function startServer() {
         console.log(`  Health: http://${config.HOST}:${config.PORT}/health`);
         console.log('═══════════════════════════════════════════════');
     });
+
+    // Keep-alive tuning: mobile clients reuse TCP connections instead of paying
+    // a full handshake + TLS round-trip cost on every request.
+    server.keepAliveTimeout = 65000;   // 65s — above typical proxy idle timeout
+    server.headersTimeout = 66000;     // Must be > keepAliveTimeout
 }
 
 startServer().catch(err => {
