@@ -11,6 +11,8 @@ const chatService = require('../services/chatService');
 const videoService = require('../services/videoService');
 const { getBaseFilename } = require('../utils/fileParser');
 const r2Service = require('../services/r2Service');
+const hlsService = require('../services/hlsService');
+const metadataService = require('../services/metadataService');
 
 // Multer for thumbnail uploads (memory storage)
 const upload = multer({
@@ -267,6 +269,104 @@ router.post('/chat/send', (req, res) => {
 
     chatService.broadcastMessage(message);
     res.json({ success: true, message });
+});
+
+// ─── HLS ROUTES ───────────────────────────────────────────────────────────────
+
+// Get HLS transcoding status
+router.get('/hls/status', (req, res) => {
+    res.json(hlsService.getStatus());
+});
+
+// Get HLS progress for a specific video
+router.get('/hls/progress/:filename', (req, res) => {
+    const { filename } = req.params;
+    res.json({ filename, ...hlsService.getProgress(filename) });
+});
+
+// Queue a specific video for HLS transcoding
+router.post('/hls/transcode', async (req, res) => {
+    try {
+        const { filename, qualities, force } = req.body;
+
+        if (!filename) {
+            return res.status(400).json({ success: false, error: 'filename is required' });
+        }
+
+        const videoFile = await videoService.findByFilename(filename);
+        if (!videoFile) {
+            return res.status(404).json({ success: false, error: 'Video not found: ' + filename });
+        }
+
+        const videoUrl = await r2Service.getSignedVideoUrl(videoFile.key, 7200); // 2h — transcode takes time
+        if (!videoUrl) {
+            return res.status(500).json({ success: false, error: 'Failed to get video URL' });
+        }
+
+        const result = await hlsService.queueVideo(filename, videoUrl, {
+            qualities: qualities || null,
+            force: !!force
+        });
+
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('[Admin] HLS transcode error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Queue ALL videos that don't yet have HLS versions
+router.post('/hls/transcode-all', async (req, res) => {
+    try {
+        const { qualities, force } = req.body;
+        const videoFiles = await r2Service.listVideos();
+
+        let queued = 0;
+        let skipped = 0;
+        let alreadyDone = 0;
+        const errors = [];
+
+        for (const file of videoFiles) {
+            // Check if already done (unless force)
+            if (!force) {
+                const exists = await hlsService.hasHLS(file.filename);
+                if (exists) {
+                    alreadyDone++;
+                    continue;
+                }
+            }
+
+            // Skip videos that are already in the queue or being processed
+            const status = hlsService.getStatus();
+            if (status.currently_processing.includes(file.filename) ||
+                status.queued.includes(file.filename)) {
+                skipped++;
+                continue;
+            }
+
+            try {
+                const videoUrl = await r2Service.getSignedVideoUrl(file.key, 7200);
+                if (videoUrl) {
+                    await hlsService.queueVideo(file.filename, videoUrl, { qualities, force: !!force });
+                    queued++;
+                }
+            } catch (err) {
+                errors.push({ filename: file.filename, error: err.message });
+            }
+        }
+
+        res.json({
+            success: true,
+            total_videos: videoFiles.length,
+            queued,
+            already_done: alreadyDone,
+            skipped,
+            errors
+        });
+    } catch (error) {
+        console.error('[Admin] HLS transcode-all error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 module.exports = router;

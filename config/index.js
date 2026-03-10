@@ -35,6 +35,19 @@ module.exports = {
         AUTO_INTERVAL_MS: 10 * 60 * 1000         // 10 minutes
     },
 
+    // HLS Transcoding
+    HLS: {
+        MAX_CONCURRENT: 2,                        // Max simultaneous transcode jobs
+        SEGMENT_DURATION: 6,                      // Seconds per .ts segment
+        KEYFRAME_INTERVAL: 48,                    // 2s at 24fps
+        PRESET: 'veryfast',                       // FFmpeg speed preset
+        QUALITIES: {
+            '360p': { width: 640, height: 360, videoBitrate: '800k', audioBitrate: '64k' },
+            '480p': { width: 854, height: 480, videoBitrate: '1400k', audioBitrate: '128k' },
+            '720p': { width: 1280, height: 720, videoBitrate: '2800k', audioBitrate: '128k' }
+        }
+    },
+
     // Chat
     CHAT: {
         MAX_AGE_MS: 24 * 60 * 60 * 1000,         // 24 hours

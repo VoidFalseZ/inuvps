@@ -1,7 +1,7 @@
 // services/r2Service.js - Cloudflare R2 storage operations
 
 const path = require('path');
-const { S3Client, GetObjectCommand, ListObjectsV2Command, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, ListObjectsV2Command, HeadObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
 
@@ -155,6 +155,23 @@ async function headObject(key) {
 }
 
 /**
+ * Upload an object to R2
+ * @param {string} key - R2 object key (path in bucket)
+ * @param {Buffer|Readable} body - File content
+ * @param {string} contentType - MIME type
+ * @returns {Promise<Object>} S3 response
+ */
+async function putObject(key, body, contentType) {
+    const params = {
+        Bucket: config.R2.BUCKET_NAME,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+    };
+    return s3Client.send(new PutObjectCommand(params));
+}
+
+/**
  * Invalidate the video list cache
  */
 function invalidateCache() {
@@ -168,6 +185,7 @@ module.exports = {
     getSignedVideoUrl,
     getObject,
     headObject,
+    putObject,
     invalidateCache,
     warmCache
 };

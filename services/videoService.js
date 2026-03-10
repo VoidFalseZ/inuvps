@@ -8,6 +8,7 @@ const thumbnailService = require('./thumbnailService');
 const { extractTitleAndEpisode, getBaseFilename } = require('../utils/fileParser');
 const { formatDateTime } = require('../utils/helpers');
 const config = require('../config');
+const hlsService = require('./hlsService');
 
 // ─── In-Memory Video Details Cache ───────────────────────────────────────────
 // This is the critical performance optimization. Instead of rebuilding video
@@ -206,6 +207,7 @@ async function getVideoDetails(videoFile, metadata = null, options = {}) {
     return {
         filename,
         url: videoUrl || `/video/${filename}`,
+        hls_url: hlsService.getHlsUrl(filename),
         thumbnail_url: thumbnailUrl,
         last_modified: fileMtime,
         display_title,

@@ -6,6 +6,7 @@ const { query, validationResult } = require('express-validator');
 const config = require('../config');
 const r2Service = require('../services/r2Service');
 const videoService = require('../services/videoService');
+const hlsService = require('../services/hlsService');
 
 // ─── Helper: Set Cache-Control and handle ETag/304 ───────────────────────────
 
@@ -211,6 +212,30 @@ router.get('/video/:filename', async (req, res) => {
     } catch (error) {
         console.error('Error streaming video:', error.message);
         res.status(500).send('Error streaming video');
+    }
+});
+
+// ─── API: HLS manifest URL for a video ───────────────────────────────────────
+
+router.get('/api/hls/:filename', async (req, res) => {
+    const { filename } = req.params;
+
+    // Check in-memory progress first (fast path — no R2 round-trip if already known)
+    const progress = hlsService.getProgress(filename);
+    if (progress.status === 'done') {
+        return res.json({ available: true, hls_url: hlsService.getHlsUrl(filename), status: progress });
+    }
+
+    // Fall back to checking R2 for previously completed transcodes (server restart case)
+    try {
+        const exists = await hlsService.hasHLS(filename);
+        if (exists) {
+            return res.json({ available: true, hls_url: hlsService.getHlsUrl(filename), status: progress });
+        }
+        return res.json({ available: false, hls_url: null, status: progress });
+    } catch (error) {
+        console.error(`[HLS API] Error checking HLS for ${filename}:`, error.message);
+        res.status(500).json({ error: 'Failed to check HLS status' });
     }
 });
 
